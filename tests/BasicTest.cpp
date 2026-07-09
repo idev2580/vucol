@@ -2,39 +2,44 @@
 #include <socl/DescriptorSet.hpp>
 #include <socl/ShaderPipeline.hpp>
 
+#include <cstdint>
+#include <vector>
+#include <gtest/gtest.h>
+
 using namespace socl;
-int main(){
-    Context ctx;
 
-    Buffer A = ctx.createBuffer(a_bytes);
-    Buffer B = ctx.createBuffer(b_bytes);
-    Buffer C = ctx.createBuffer(c_bytes);
+TEST(SoclApi, CreateInfoIsOpenGlLikeButObjectScoped){
+    std::vector<std::uint32_t> spirv = {0x07230203u};
 
-    ShaderPipeline gemm = ctx.createShaderPipeline({
-        .spirv = gemm_spv,
+    ShaderPipelineCreateInfo createInfo{
+        .spirv = spirv,
         .bindings = {
             {0, DescriptorType::UnifiedPreferred},
             {1, DescriptorType::UnifiedPreferred},
             {2, DescriptorType::UnifiedPreferred},
         },
-        .pushConstantSize = sizeof(GemmArgs),
+        .pushConstantSize = 16,
         .specConstants = {
-            {0, tile_m},
-            {1, tile_n},
-            {2, tile_k},
+            {0, 8},
+            {1, 8},
+            {2, 4},
         }
-    });
+    };
 
-    DescriptorSet desc = ctx.createDescriptorSet(gemm);
-    desc.bindBuffer(0, A);
-    desc.bindBuffer(1, B);
-    desc.bindBuffer(2, C);
-    desc.update();
+    EXPECT_EQ(createInfo.bindings.size(), 3u);
+    EXPECT_EQ(createInfo.pushConstantSize, 16u);
+    EXPECT_EQ(createInfo.specConstants[2].value, 4u);
+}
 
-    ctx.begin();
-    ctx.use(gemm);
-    ctx.bind(desc);
-    ctx.push(args);
-    ctx.dispatch(gx, gy, gz);
-    ctx.submitAndWait();
+TEST(SoclApi, DefaultObjectsAreEmpty){
+    Buffer buffer;
+    ShaderPipeline pipeline;
+    DescriptorSet descriptorSet;
+    DispatchToken token;
+
+    EXPECT_FALSE(buffer);
+    EXPECT_FALSE(pipeline);
+    EXPECT_FALSE(descriptorSet);
+    EXPECT_FALSE(token.valid());
+    EXPECT_EQ(buffer.size(), 0u);
 }
