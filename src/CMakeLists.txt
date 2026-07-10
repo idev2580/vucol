@@ -1,5 +1,5 @@
 # Scan CPP files
-file(GLOB SOURCES "${CMAKE_SOURCE_DIR}/src/*.cpp")
+file(GLOB SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 
 # Export to parent
 set(SOURCES ${SOURCES} PARENT_SCOPE)
