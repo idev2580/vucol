@@ -2,18 +2,41 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <iosfwd>
 #include <socl/Buffer.hpp>
 #include <socl/DescriptorSet.hpp>
 #include <socl/ShaderPipeline.hpp>
+#include <string>
+#include <string_view>
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.hpp>
+#include <vector>
 
 namespace socl{
+    struct GpuInfo{
+        std::uint32_t index = 0;
+        std::string name;
+        std::string type;
+        std::uint32_t vendorId = 0;
+        std::uint32_t deviceId = 0;
+        std::uint32_t apiVersion = 0;
+        std::uint32_t driverVersion = 0;
+        std::uint32_t computeQueueFamily = 0;
+        std::uint32_t computeQueueCount = 0;
+    };
+
+    struct ContextCreateInfo{
+        std::uint32_t physicalDeviceIndex = 0;
+        std::vector<const char*> requiredDeviceExtensions;
+    };
+
     namespace detail{
         struct ContextState{
             vk::Instance instance;
             vk::PhysicalDevice physicalDevice;
             vk::PhysicalDeviceProperties physicalDeviceProperties{};
+            GpuInfo gpuInfo;
+            std::vector<std::string> supportedDeviceExtensions;
             vk::Device device;
             vk::Queue queue;
             std::uint32_t queueFamily = 0;
@@ -58,6 +81,7 @@ namespace socl{
     class Context{
         public:
         Context();
+        explicit Context(const ContextCreateInfo& createInfo);
         ~Context();
 
         Context(const Context&) = delete;
@@ -89,6 +113,12 @@ namespace socl{
         void submitAndWait();
 
         [[nodiscard]] bool usingIntegratedGpu() const;
+        [[nodiscard]] const GpuInfo& gpuInfo() const;
+        [[nodiscard]] std::vector<std::string> supportedDeviceExtensions() const;
+        [[nodiscard]] bool supportsDeviceExtension(std::string_view extensionName) const;
+        void printGpuInfo(std::ostream& os) const;
+
+        [[nodiscard]] static std::vector<GpuInfo> enumerateGpus();
 
         private:
         std::shared_ptr<detail::ContextState> state_;

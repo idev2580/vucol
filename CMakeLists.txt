@@ -8,6 +8,7 @@ else()
 endif()
 
 option(SOCL_BUILD_TESTS "Build SOCL tests" ${SOCL_IS_TOP_LEVEL})
+option(SOCL_BUILD_EXAMPLES "Build SOCL examples" ${SOCL_IS_TOP_LEVEL})
 
 if(SOCL_IS_TOP_LEVEL)
     set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -38,6 +39,10 @@ target_include_directories(socl
         "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
 )
 target_link_libraries(socl PUBLIC Vulkan::Vulkan vk-bootstrap::vk-bootstrap GPUOpen::VulkanMemoryAllocator)
+
+if(SOCL_BUILD_EXAMPLES)
+    add_subdirectory(examples)
+endif()
 
 if(SOCL_BUILD_TESTS)
     enable_testing()

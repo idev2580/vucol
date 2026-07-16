@@ -5,8 +5,11 @@
 
 #include <VkBootstrap.h>
 
+#include <algorithm>
+#include <ostream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -54,6 +57,87 @@ namespace{
         }
         return 0;
     }
+
+    vkb::Instance createVkbInstance(){
+        vkb::InstanceBuilder instanceBuilder;
+        return unwrap(
+            instanceBuilder
+                .set_app_name("socl")
+                .set_engine_name("socl")
+                .require_api_version(1, 1, 0)
+                .build(),
+            "vk-bootstrap instance creation failed");
+    }
+
+    std::string physicalDeviceTypeName(vk::PhysicalDeviceType type){
+        switch(type){
+            case vk::PhysicalDeviceType::eOther:
+                return "other";
+            case vk::PhysicalDeviceType::eIntegratedGpu:
+                return "integrated";
+            case vk::PhysicalDeviceType::eDiscreteGpu:
+                return "discrete";
+            case vk::PhysicalDeviceType::eVirtualGpu:
+                return "virtual";
+            case vk::PhysicalDeviceType::eCpu:
+                return "cpu";
+        }
+        return "unknown";
+    }
+
+    std::vector<std::string> enumerateDeviceExtensionNames(vk::PhysicalDevice physicalDevice){
+        std::vector<std::string> names;
+        for(const auto& extension : physicalDevice.enumerateDeviceExtensionProperties()){
+            names.emplace_back(extension.extensionName);
+        }
+        return names;
+    }
+
+    std::uint32_t findComputeQueueFamily(vk::PhysicalDevice physicalDevice){
+        const auto queueFamilies = physicalDevice.getQueueFamilyProperties();
+        for(std::uint32_t i = 0; i < queueFamilies.size(); ++i){
+            if(queueFamilies[i].queueFlags & vk::QueueFlagBits::eCompute){
+                return i;
+            }
+        }
+        throw std::runtime_error("Physical device does not expose a compute queue.");
+    }
+
+    socl::GpuInfo makeGpuInfo(vk::PhysicalDevice physicalDevice,
+                              std::uint32_t index,
+                              std::uint32_t computeQueueFamily){
+        const auto properties = physicalDevice.getProperties();
+        const auto queueFamilies = physicalDevice.getQueueFamilyProperties();
+
+        socl::GpuInfo info;
+        info.index = index;
+        info.name = properties.deviceName.data();
+        info.type = physicalDeviceTypeName(properties.deviceType);
+        info.vendorId = properties.vendorID;
+        info.deviceId = properties.deviceID;
+        info.apiVersion = properties.apiVersion;
+        info.driverVersion = properties.driverVersion;
+        info.computeQueueFamily = computeQueueFamily;
+        info.computeQueueCount = queueFamilies[computeQueueFamily].queueCount;
+        return info;
+    }
+
+    vkb::PhysicalDeviceSelector makePhysicalDeviceSelector(
+        const vkb::Instance& instance,
+        const std::vector<const char*>& requiredDeviceExtensions){
+        vk::PhysicalDeviceVulkan11Features required11{};
+        vkb::PhysicalDeviceSelector selector(instance);
+        selector
+            .set_minimum_version(1, 1)
+            .set_required_features_11(required11)
+            .prefer_gpu_device_type(vkb::PreferredDeviceType::discrete)
+            .require_present(false);
+
+        if(!requiredDeviceExtensions.empty()){
+            selector.add_required_extensions(requiredDeviceExtensions);
+        }
+        return selector;
+    }
 }
 
 namespace socl{
@@ -76,38 +160,36 @@ namespace socl{
     }
 
     Context::Context()
-        : state_(std::make_shared<detail::ContextState>()){
-        vkb::InstanceBuilder instanceBuilder;
-        auto vkbInstance = unwrap(
-            instanceBuilder
-                .set_app_name("socl")
-                .set_engine_name("socl")
-                .require_api_version(1, 1, 0)
-                .build(),
-            "vk-bootstrap instance creation failed");
+        : Context(ContextCreateInfo{}){
+    }
 
+    Context::Context(const ContextCreateInfo& createInfo)
+        : state_(std::make_shared<detail::ContextState>()){
+        auto vkbInstance = createVkbInstance();
         state_->instance = vk::Instance(vkbInstance.instance);
 
-        vk::PhysicalDeviceVulkan11Features required11{};
-        vkb::PhysicalDeviceSelector selector(vkbInstance);
-        auto vkbPhysicalDevice = unwrap(
-            selector
-                .set_minimum_version(1, 1)
-                .set_required_features_11(required11)
-                .prefer_gpu_device_type(vkb::PreferredDeviceType::discrete)
-                .select(),
+        auto selector = makePhysicalDeviceSelector(vkbInstance,
+                                                   createInfo.requiredDeviceExtensions);
+        auto vkbPhysicalDevices = unwrap(
+            selector.select_devices(),
             "vk-bootstrap physical device selection failed");
+        if(createInfo.physicalDeviceIndex >= vkbPhysicalDevices.size()){
+            throw std::out_of_range("ContextCreateInfo::physicalDeviceIndex is out of range.");
+        }
 
+        auto vkbPhysicalDevice = std::move(vkbPhysicalDevices[createInfo.physicalDeviceIndex]);
         vkb::DeviceBuilder deviceBuilder(vkbPhysicalDevice);
         auto vkbDevice = unwrap(deviceBuilder.build(), "vk-bootstrap device creation failed");
 
         state_->physicalDevice = vk::PhysicalDevice(vkbPhysicalDevice.physical_device);
         state_->physicalDeviceProperties = state_->physicalDevice.getProperties();
+        state_->supportedDeviceExtensions = enumerateDeviceExtensionNames(state_->physicalDevice);
         state_->device = vk::Device(vkbDevice.device);
-        state_->queue = vk::Queue(unwrap(vkbDevice.get_queue(vkb::QueueType::compute),
-                                         "vk-bootstrap compute queue lookup failed"));
-        state_->queueFamily = unwrap(vkbDevice.get_queue_index(vkb::QueueType::compute),
-                                     "vk-bootstrap compute queue family lookup failed");
+        state_->queueFamily = findComputeQueueFamily(state_->physicalDevice);
+        state_->queue = state_->device.getQueue(state_->queueFamily, 0);
+        state_->gpuInfo = makeGpuInfo(state_->physicalDevice,
+                                      createInfo.physicalDeviceIndex,
+                                      state_->queueFamily);
 
         const VmaAllocatorCreateInfo allocatorInfo{
             .physicalDevice = state_->physicalDevice,
@@ -416,6 +498,59 @@ namespace socl{
 
     bool Context::usingIntegratedGpu() const{
         return state_->physicalDeviceProperties.deviceType == vk::PhysicalDeviceType::eIntegratedGpu;
+    }
+
+    const GpuInfo& Context::gpuInfo() const{
+        return state_->gpuInfo;
+    }
+
+    std::vector<std::string> Context::supportedDeviceExtensions() const{
+        return state_->supportedDeviceExtensions;
+    }
+
+    bool Context::supportsDeviceExtension(std::string_view extensionName) const{
+        return std::find(state_->supportedDeviceExtensions.begin(),
+                         state_->supportedDeviceExtensions.end(),
+                         extensionName) != state_->supportedDeviceExtensions.end();
+    }
+
+    void Context::printGpuInfo(std::ostream& os) const{
+        const auto& info = gpuInfo();
+        os << "SOCL GPU " << info.index << '\n'
+           << "  Name: " << info.name << '\n'
+           << "  Type: " << info.type << '\n'
+           << "  Vendor ID: 0x" << std::hex << info.vendorId << std::dec << '\n'
+           << "  Device ID: 0x" << std::hex << info.deviceId << std::dec << '\n'
+           << "  Vulkan API: "
+           << VK_VERSION_MAJOR(info.apiVersion) << '.'
+           << VK_VERSION_MINOR(info.apiVersion) << '.'
+           << VK_VERSION_PATCH(info.apiVersion) << '\n'
+           << "  Driver Version: " << info.driverVersion << '\n'
+           << "  Compute Queue Family: " << info.computeQueueFamily << '\n'
+           << "  Compute Queue Count: " << info.computeQueueCount << '\n'
+           << "  Device Extensions: " << state_->supportedDeviceExtensions.size() << '\n';
+    }
+
+    std::vector<GpuInfo> Context::enumerateGpus(){
+        auto vkbInstance = createVkbInstance();
+        vk::Instance instance = vk::Instance(vkbInstance.instance);
+        std::vector<GpuInfo> gpus;
+        try{
+            auto selector = makePhysicalDeviceSelector(vkbInstance, {});
+            auto physicalDevices = unwrap(
+                selector.select_devices(),
+                "vk-bootstrap physical device enumeration failed");
+            gpus.reserve(physicalDevices.size());
+            for(std::uint32_t i = 0; i < physicalDevices.size(); ++i){
+                auto device = vk::PhysicalDevice(physicalDevices[i].physical_device);
+                gpus.push_back(makeGpuInfo(device, i, findComputeQueueFamily(device)));
+            }
+        }catch(...){
+            instance.destroy();
+            throw;
+        }
+        instance.destroy();
+        return gpus;
     }
 
     DispatchToken::DispatchToken() = default;
