@@ -104,6 +104,18 @@ namespace{
         throw std::runtime_error("Physical device does not expose a compute queue.");
     }
 
+    bool hasDeviceLocalHostVisibleMemory(vk::PhysicalDevice physicalDevice){
+        const auto memoryProperties = physicalDevice.getMemoryProperties();
+        for(std::uint32_t i = 0; i < memoryProperties.memoryTypeCount; ++i){
+            const auto flags = memoryProperties.memoryTypes[i].propertyFlags;
+            if((flags & vk::MemoryPropertyFlagBits::eDeviceLocal) &&
+               (flags & vk::MemoryPropertyFlagBits::eHostVisible)){
+                return true;
+            }
+        }
+        return false;
+    }
+
     socl::GpuInfo makeGpuInfo(vk::PhysicalDevice physicalDevice,
                               std::uint32_t index,
                               std::uint32_t computeQueueFamily){
@@ -188,6 +200,9 @@ namespace socl{
         state_->device = vk::Device(vkbDevice.device);
         state_->queueFamily = findComputeQueueFamily(state_->physicalDevice);
         state_->queue = state_->device.getQueue(state_->queueFamily, 0);
+        state_->autoBufferUsesHostVisibleMemory =
+            state_->physicalDeviceProperties.deviceType == vk::PhysicalDeviceType::eIntegratedGpu &&
+            hasDeviceLocalHostVisibleMemory(state_->physicalDevice);
         state_->gpuInfo = makeGpuInfo(state_->physicalDevice,
                                       createInfo.physicalDeviceIndex,
                                       state_->queueFamily);
@@ -220,9 +235,8 @@ namespace socl{
         state->allocator = state_->allocator;
         state->size = static_cast<vk::DeviceSize>(bytes);
 
-        const bool integrated = usingIntegratedGpu();
         state->type = type == BufferType::Auto
-            ? (integrated ? BufferType::HostVisible : BufferType::DeviceLocal)
+            ? (state_->autoBufferUsesHostVisibleMemory ? BufferType::HostVisible : BufferType::DeviceLocal)
             : type;
 
         vk::BufferCreateInfo bufferInfo;

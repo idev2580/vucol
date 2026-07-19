@@ -49,8 +49,8 @@ namespace socl{
         [[nodiscard]] bool hostVisible() const;
         [[nodiscard]] explicit operator bool() const;
 
-        // These helpers work only for host-visible allocations. Device-local
-        // buffers need explicit staging/copy support, which SOCL can add later.
+        // Host-visible buffers are mapped directly. Device-local buffers use
+        // an internal staging buffer for CPU reads and writes.
         void write(const void* data, std::size_t bytes, std::size_t offset = 0);
         void read(void* data, std::size_t bytes, std::size_t offset = 0) const;
 

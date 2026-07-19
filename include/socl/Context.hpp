@@ -43,6 +43,7 @@ namespace socl{
             vk::CommandPool commandPool;
             vk::CommandBuffer recordingCommandBuffer;
             VmaAllocator allocator = VK_NULL_HANDLE;
+            bool autoBufferUsesHostVisibleMemory = false;
             bool recording = false;
             std::shared_ptr<ShaderPipelineState> currentPipeline;
             std::shared_ptr<DescriptorSetState> currentDescriptorSet;
