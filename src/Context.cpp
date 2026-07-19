@@ -6,6 +6,7 @@
 #include <VkBootstrap.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <ostream>
 #include <stdexcept>
 #include <string>
@@ -301,16 +302,17 @@ namespace socl{
         state->pipelineLayout = state->device.createPipelineLayout(pipelineLayoutInfo);
 
         std::vector<vk::SpecializationMapEntry> specializationEntries;
-        std::vector<std::uint32_t> specializationData;
+        std::vector<std::byte> specializationData;
         specializationEntries.reserve(createInfo.specConstants.size());
-        specializationData.reserve(createInfo.specConstants.size());
-        for(std::size_t i = 0; i < createInfo.specConstants.size(); ++i){
-            specializationData.push_back(createInfo.specConstants[i].value);
+        for(const auto& specConstant : createInfo.specConstants){
+            const auto offset = static_cast<std::uint32_t>(specializationData.size());
+            specializationData.insert(specializationData.end(), specConstant.data.begin(), specConstant.data.end());
+
             vk::SpecializationMapEntry entry;
             entry
-                .setConstantID(createInfo.specConstants[i].id)
-                .setOffset(static_cast<std::uint32_t>(i * sizeof(std::uint32_t)))
-                .setSize(sizeof(std::uint32_t));
+                .setConstantID(specConstant.id)
+                .setOffset(offset)
+                .setSize(specConstant.data.size());
             specializationEntries.push_back(entry);
         }
 
@@ -318,7 +320,7 @@ namespace socl{
         specializationInfo
             .setMapEntryCount(static_cast<std::uint32_t>(specializationEntries.size()))
             .setPMapEntries(specializationEntries.data())
-            .setDataSize(specializationData.size() * sizeof(std::uint32_t))
+            .setDataSize(specializationData.size())
             .setPData(specializationData.data());
         vk::PipelineShaderStageCreateInfo stageInfo;
         stageInfo

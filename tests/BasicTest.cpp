@@ -2,6 +2,7 @@
 #include <socl/DescriptorSet.hpp>
 #include <socl/ShaderPipeline.hpp>
 
+#include <cstring>
 #include <cstdint>
 #include <vector>
 #include <gtest/gtest.h>
@@ -20,15 +21,41 @@ TEST(SoclApi, CreateInfoIsOpenGlLikeButObjectScoped){
         },
         .pushConstantSize = 16,
         .specConstants = {
-            {0, 8},
-            {1, 8},
-            {2, 4},
+            {0, 8u},
+            {1, 8u},
+            {2, 4u},
         }
     };
 
     EXPECT_EQ(createInfo.bindings.size(), 3u);
     EXPECT_EQ(createInfo.pushConstantSize, 16u);
-    EXPECT_EQ(createInfo.specConstants[2].value, 4u);
+    EXPECT_EQ(createInfo.specConstants[2].id, 2u);
+    EXPECT_EQ(createInfo.specConstants[2].size(), sizeof(std::uint32_t));
+}
+
+TEST(SoclApi, SpecConstantConvenienceApiSupportsScalarTypes){
+    const ShaderPipelineCreateInfo createInfo{
+        .specConstants = {
+            {0, specConstant(std::uint32_t{8})},
+            {1, specConstant(std::int32_t{-2})},
+            {2, specConstant(0.5f)},
+            {3, specConstant(true)},
+        }
+    };
+
+    ASSERT_EQ(createInfo.specConstants.size(), 4u);
+    EXPECT_EQ(createInfo.specConstants[0].size(), sizeof(std::uint32_t));
+    EXPECT_EQ(createInfo.specConstants[1].size(), sizeof(std::int32_t));
+    EXPECT_EQ(createInfo.specConstants[2].size(), sizeof(float));
+    EXPECT_EQ(createInfo.specConstants[3].size(), sizeof(VkBool32));
+
+    float scale = 0.0f;
+    std::memcpy(&scale, createInfo.specConstants[2].data.data(), sizeof(scale));
+    EXPECT_FLOAT_EQ(scale, 0.5f);
+
+    VkBool32 enabled = VK_FALSE;
+    std::memcpy(&enabled, createInfo.specConstants[3].data.data(), sizeof(enabled));
+    EXPECT_EQ(enabled, VK_TRUE);
 }
 
 TEST(SoclApi, DefaultObjectsAreEmpty){

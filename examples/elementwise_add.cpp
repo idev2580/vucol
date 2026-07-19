@@ -9,6 +9,10 @@
 #include <vector>
 
 namespace{
+    struct alignas(16) DispatchParams{
+        std::uint32_t count = 0;
+    };
+
     std::vector<std::uint32_t> loadSpirv(const std::string& path){
         std::ifstream file(path, std::ios::binary | std::ios::ate);
         if(!file){
@@ -56,14 +60,17 @@ int main(int argc, char** argv){
         const std::vector<float> inputA = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
         const std::vector<float> inputB = {8.0f, 7.0f, 6.0f, 5.0f, 4.0f, 3.0f, 2.0f, 1.0f};
         std::vector<float> output(inputA.size(), 0.0f);
+        const DispatchParams params{.count = static_cast<std::uint32_t>(inputA.size())};
 
         const std::size_t bytes = inputA.size() * sizeof(float);
         auto bufferA = context.createBuffer(bytes, socl::BufferType::HostVisible);
         auto bufferB = context.createBuffer(bytes, socl::BufferType::HostVisible);
         auto bufferOut = context.createBuffer(bytes, socl::BufferType::HostVisible);
+        auto paramsBuffer = context.createBuffer(sizeof(params), socl::BufferType::HostVisible);
 
         bufferA.write(inputA.data(), bytes);
         bufferB.write(inputB.data(), bytes);
+        paramsBuffer.write(&params, sizeof(params));
 
         const auto spirv = loadSpirv(SOCL_ELEMENTWISE_ADD_SPV);
         auto pipeline = context.createShaderPipeline({
@@ -72,22 +79,31 @@ int main(int argc, char** argv){
                 {0, socl::DescriptorType::StorageBuffer},
                 {1, socl::DescriptorType::StorageBuffer},
                 {2, socl::DescriptorType::StorageBuffer},
+                {3, socl::DescriptorType::UniformBuffer},
             },
             .pushConstantSize = sizeof(std::uint32_t),
+            // These specialization constants are intentionally unused by the shader.
+            // They only demonstrate that the API accepts multiple scalar value types.
+            .specConstants = {
+                {0, socl::specConstant(std::uint32_t{64})},
+                {1, socl::specConstant(std::int32_t{-1})},
+                {2, socl::specConstant(1.0f)},
+                {3, socl::specConstant(true)},
+            },
         });
 
         auto descriptorSet = context.createDescriptorSet(pipeline);
         descriptorSet.bindBuffer(0, bufferA);
         descriptorSet.bindBuffer(1, bufferB);
         descriptorSet.bindBuffer(2, bufferOut);
+        descriptorSet.bindBuffer(3, paramsBuffer);
         descriptorSet.update();
 
-        const std::uint32_t count = static_cast<std::uint32_t>(inputA.size());
         context.begin();
         context.use(pipeline);
         context.bind(descriptorSet);
-        context.push(count);
-        context.dispatch((count + 63u) / 64u);
+        context.push(params.count);
+        context.dispatch((params.count + 63u) / 64u);
         context.submitAndWait();
 
         bufferOut.read(output.data(), bytes);

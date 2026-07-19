@@ -18,9 +18,13 @@ layout(set = 0, binding = 2) writeonly buffer Output{
     float values[];
 } outputData;
 
+layout(std140, set = 0, binding = 3) uniform DispatchParams{
+    uint count;
+} params;
+
 void main(){
     const uint index = gl_GlobalInvocationID.x;
-    if(index >= pc.count){
+    if(index >= pc.count || index >= params.count){
         return;
     }
     outputData.values[index] = inputA.values[index] + inputB.values[index];
