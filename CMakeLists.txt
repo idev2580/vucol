@@ -106,6 +106,9 @@ set_property(TARGET vk-bootstrap PROPERTY POSITION_INDEPENDENT_CODE ON)
 add_subdirectory(src)
 
 add_library(socl SHARED ${SOURCES})
+set_target_properties(socl PROPERTIES
+    WINDOWS_EXPORT_ALL_SYMBOLS ON
+)
 target_compile_features(socl PUBLIC cxx_std_20)
 target_include_directories(socl
     PUBLIC
@@ -119,6 +122,9 @@ if(SOCL_BUILD_EXAMPLES)
 endif()
 
 if(SOCL_BUILD_TESTS)
+    if(MSVC)
+        set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    endif()
     enable_testing()
 
     FetchContent_Declare(

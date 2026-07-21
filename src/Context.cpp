@@ -89,7 +89,7 @@ namespace{
     std::vector<std::string> enumerateDeviceExtensionNames(vk::PhysicalDevice physicalDevice){
         std::vector<std::string> names;
         for(const auto& extension : physicalDevice.enumerateDeviceExtensionProperties()){
-            names.emplace_back(extension.extensionName);
+            names.emplace_back(extension.extensionName.data());
         }
         return names;
     }
