@@ -16,7 +16,18 @@ endif()
 
 include(FetchContent)
 find_package(Vulkan REQUIRED)
-find_package(shaderc QUIET CONFIG)
+
+if(WIN32 AND DEFINED ENV{VULKAN_SDK})
+    find_package(shaderc QUIET CONFIG
+        HINTS "$ENV{VULKAN_SDK}"
+        PATH_SUFFIXES
+            Lib/cmake/shaderc
+            lib/cmake/shaderc
+            share/cmake/shaderc
+    )
+else()
+    find_package(shaderc QUIET CONFIG)
+endif()
 
 if(TARGET shaderc::shaderc)
     set(SOCL_SHADERC_TARGET shaderc::shaderc)
@@ -26,10 +37,57 @@ elseif(TARGET shaderc_shared)
     set(SOCL_SHADERC_TARGET shaderc_shared)
 elseif(TARGET shaderc)
     set(SOCL_SHADERC_TARGET shaderc)
+elseif(WIN32 AND DEFINED ENV{VULKAN_SDK})
+    find_path(SOCL_SHADERC_INCLUDE_DIR
+        NAMES shaderc/shaderc.hpp
+        HINTS "$ENV{VULKAN_SDK}"
+        PATH_SUFFIXES Include include
+        NO_DEFAULT_PATH
+    )
+    find_library(SOCL_SHADERC_LIBRARY_RELEASE
+        NAMES shaderc_combined shaderc
+        HINTS "$ENV{VULKAN_SDK}"
+        PATH_SUFFIXES Lib lib
+        NO_DEFAULT_PATH
+    )
+    find_library(SOCL_SHADERC_LIBRARY_DEBUG
+        NAMES shaderc_combinedd shadercd
+        HINTS "$ENV{VULKAN_SDK}"
+        PATH_SUFFIXES Lib lib
+        NO_DEFAULT_PATH
+    )
+
+    if(NOT SOCL_SHADERC_INCLUDE_DIR OR NOT SOCL_SHADERC_LIBRARY_RELEASE)
+        message(FATAL_ERROR
+            "shaderc was not found in VULKAN_SDK ($ENV{VULKAN_SDK}). Expected "
+            "shaderc/shaderc.hpp under Include and shaderc_combined.lib or shaderc.lib "
+            "under Lib."
+        )
+    endif()
+
+    add_library(socl_shaderc_sdk UNKNOWN IMPORTED)
+    set_target_properties(socl_shaderc_sdk PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${SOCL_SHADERC_INCLUDE_DIR}"
+        IMPORTED_LOCATION "${SOCL_SHADERC_LIBRARY_RELEASE}"
+    )
+
+    if(SOCL_SHADERC_LIBRARY_DEBUG)
+        set_target_properties(socl_shaderc_sdk PROPERTIES
+            IMPORTED_LOCATION_DEBUG "${SOCL_SHADERC_LIBRARY_DEBUG}"
+        )
+    else()
+        set_target_properties(socl_shaderc_sdk PROPERTIES
+            IMPORTED_LOCATION_DEBUG "${SOCL_SHADERC_LIBRARY_RELEASE}"
+        )
+    endif()
+
+    set(SOCL_SHADERC_TARGET socl_shaderc_sdk)
 else()
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(SHADERC REQUIRED IMPORTED_TARGET shaderc)
-    set(SOCL_SHADERC_TARGET PkgConfig::SHADERC)
+    message(FATAL_ERROR
+        "shaderc was not found. Install a shaderc package that provides a supported "
+        "CMake target (shaderc::shaderc, shaderc::shaderc_shared, shaderc_shared, or "
+        "shaderc). On Windows, ensure VULKAN_SDK points to the Vulkan SDK installation."
+    )
 endif()
 
 FetchContent_Declare(
