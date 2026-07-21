@@ -1,5 +1,6 @@
 #include <socl/Context.hpp>
 #include <socl/DescriptorSet.hpp>
+#include <socl/ShaderCompiler.hpp>
 #include <socl/ShaderPipeline.hpp>
 
 #include <cstring>
@@ -56,6 +57,26 @@ TEST(SoclApi, SpecConstantConvenienceApiSupportsScalarTypes){
     VkBool32 enabled = VK_FALSE;
     std::memcpy(&enabled, createInfo.specConstants[3].data.data(), sizeof(enabled));
     EXPECT_EQ(enabled, VK_TRUE);
+}
+
+TEST(SoclApi, CompileGlslToSpirvReturnsComputeShaderBytecode){
+    const char* source = R"(#version 450
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+void main(){
+}
+)";
+
+    const auto spirv = compileGlslToSpirv(source);
+
+    ASSERT_FALSE(spirv.empty());
+    EXPECT_EQ(spirv[0], 0x07230203u);
+}
+
+TEST(SoclApi, CompileGlslToSpirvReportsInvalidGlsl){
+    EXPECT_THROW(
+        static_cast<void>(compileGlslToSpirv("#version 450\ninvalid glsl\n")),
+        std::runtime_error);
 }
 
 TEST(SoclApi, DefaultObjectsAreEmpty){

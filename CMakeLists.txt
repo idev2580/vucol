@@ -16,6 +16,21 @@ endif()
 
 include(FetchContent)
 find_package(Vulkan REQUIRED)
+find_package(shaderc QUIET CONFIG)
+
+if(TARGET shaderc::shaderc)
+    set(SOCL_SHADERC_TARGET shaderc::shaderc)
+elseif(TARGET shaderc::shaderc_shared)
+    set(SOCL_SHADERC_TARGET shaderc::shaderc_shared)
+elseif(TARGET shaderc_shared)
+    set(SOCL_SHADERC_TARGET shaderc_shared)
+elseif(TARGET shaderc)
+    set(SOCL_SHADERC_TARGET shaderc)
+else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(SHADERC REQUIRED IMPORTED_TARGET shaderc)
+    set(SOCL_SHADERC_TARGET PkgConfig::SHADERC)
+endif()
 
 FetchContent_Declare(
   vk-bootstrap
@@ -39,6 +54,7 @@ target_include_directories(socl
         "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
 )
 target_link_libraries(socl PUBLIC Vulkan::Vulkan vk-bootstrap::vk-bootstrap GPUOpen::VulkanMemoryAllocator)
+target_link_libraries(socl PRIVATE ${SOCL_SHADERC_TARGET})
 
 if(SOCL_BUILD_EXAMPLES)
     add_subdirectory(examples)
