@@ -94,6 +94,101 @@ namespace{
         return names;
     }
 
+    bool containsExtension(const std::vector<std::string>& extensionNames,
+                           std::string_view extensionName){
+        return std::find(extensionNames.begin(),
+                         extensionNames.end(),
+                         extensionName) != extensionNames.end();
+    }
+
+    void checkCooperativeMatrixQuery(VkResult result, const char* message){
+        if(result != VK_SUCCESS && result != VK_INCOMPLETE){
+            throw std::runtime_error(message);
+        }
+    }
+
+    std::vector<VkCooperativeMatrixPropertiesKHR> queryCooperativeMatrixTiles(
+        vk::Instance instance,
+        vk::PhysicalDevice physicalDevice){
+        auto query = reinterpret_cast<PFN_vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR>(
+            vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR"));
+        if(!query){
+            return {};
+        }
+
+        const VkPhysicalDevice rawPhysicalDevice = physicalDevice;
+        std::uint32_t count = 0;
+        checkCooperativeMatrixQuery(query(rawPhysicalDevice, &count, nullptr),
+                                    "vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR failed.");
+        std::vector<VkCooperativeMatrixPropertiesKHR> properties;
+
+        VkResult result = VK_INCOMPLETE;
+        while(result == VK_INCOMPLETE){
+            properties.assign(count, {});
+            for(auto& property : properties){
+                property.sType = VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_PROPERTIES_KHR;
+            }
+
+            result = query(rawPhysicalDevice, &count, properties.data());
+            checkCooperativeMatrixQuery(result,
+                                        "vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR failed.");
+        }
+
+        properties.resize(count);
+        return properties;
+    }
+
+    socl::CooperativeMatrixSupportInfo makeCooperativeMatrixSupportInfo(
+        vk::Instance instance,
+        vk::PhysicalDevice physicalDevice,
+        const std::vector<std::string>& extensionNames){
+        socl::CooperativeMatrixSupportInfo info;
+        info.extensionSupported = containsExtension(extensionNames, VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME);
+        if(!info.extensionSupported){
+            return info;
+        }
+
+        VkPhysicalDeviceCooperativeMatrixFeaturesKHR features{};
+        features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR;
+        VkPhysicalDeviceFeatures2 features2{};
+        features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        features2.pNext = &features;
+        vkGetPhysicalDeviceFeatures2(physicalDevice, &features2);
+
+        info.featureSupported = features.cooperativeMatrix == VK_TRUE;
+        info.robustBufferAccessSupported =
+            features.cooperativeMatrixRobustBufferAccess == VK_TRUE;
+        if(!info.featureSupported){
+            return info;
+        }
+
+        VkPhysicalDeviceCooperativeMatrixPropertiesKHR properties{};
+        properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_PROPERTIES_KHR;
+        VkPhysicalDeviceProperties2 properties2{};
+        properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        properties2.pNext = &properties;
+        vkGetPhysicalDeviceProperties2(physicalDevice, &properties2);
+        info.supportedStages = vk::ShaderStageFlags(properties.cooperativeMatrixSupportedStages);
+
+        const auto rawTiles = queryCooperativeMatrixTiles(instance, physicalDevice);
+        info.tiles.reserve(rawTiles.size());
+        for(const auto& rawTile : rawTiles){
+            info.tiles.push_back({
+                .m = rawTile.MSize,
+                .n = rawTile.NSize,
+                .k = rawTile.KSize,
+                .aType = vk::ComponentTypeKHR(rawTile.AType),
+                .bType = vk::ComponentTypeKHR(rawTile.BType),
+                .cType = vk::ComponentTypeKHR(rawTile.CType),
+                .resultType = vk::ComponentTypeKHR(rawTile.ResultType),
+                .saturatingAccumulation = rawTile.saturatingAccumulation == VK_TRUE,
+                .scope = vk::ScopeKHR(rawTile.scope),
+            });
+        }
+
+        return info;
+    }
+
     std::uint32_t findComputeQueueFamily(vk::PhysicalDevice physicalDevice){
         const auto queueFamilies = physicalDevice.getQueueFamilyProperties();
         for(std::uint32_t i = 0; i < queueFamilies.size(); ++i){
@@ -197,6 +292,10 @@ namespace socl{
         state_->physicalDevice = vk::PhysicalDevice(vkbPhysicalDevice.physical_device);
         state_->physicalDeviceProperties = state_->physicalDevice.getProperties();
         state_->supportedDeviceExtensions = enumerateDeviceExtensionNames(state_->physicalDevice);
+        state_->cooperativeMatrixSupportInfo =
+            makeCooperativeMatrixSupportInfo(state_->instance,
+                                             state_->physicalDevice,
+                                             state_->supportedDeviceExtensions);
         state_->device = vk::Device(vkbDevice.device);
         state_->queueFamily = findComputeQueueFamily(state_->physicalDevice);
         state_->queue = state_->device.getQueue(state_->queueFamily, 0);
@@ -525,9 +624,16 @@ namespace socl{
     }
 
     bool Context::supportsDeviceExtension(std::string_view extensionName) const{
-        return std::find(state_->supportedDeviceExtensions.begin(),
-                         state_->supportedDeviceExtensions.end(),
-                         extensionName) != state_->supportedDeviceExtensions.end();
+        return containsExtension(state_->supportedDeviceExtensions, extensionName);
+    }
+
+    bool Context::supportsCooperativeMatrix() const{
+        const auto& info = state_->cooperativeMatrixSupportInfo;
+        return info.extensionSupported && info.featureSupported && !info.tiles.empty();
+    }
+
+    const CooperativeMatrixSupportInfo& Context::cooperativeMatrixSupportInfo() const{
+        return state_->cooperativeMatrixSupportInfo;
     }
 
     void Context::printGpuInfo(std::ostream& os) const{
@@ -544,7 +650,10 @@ namespace socl{
            << "  Driver Version: " << info.driverVersion << '\n'
            << "  Compute Queue Family: " << info.computeQueueFamily << '\n'
            << "  Compute Queue Count: " << info.computeQueueCount << '\n'
-           << "  Device Extensions: " << state_->supportedDeviceExtensions.size() << '\n';
+           << "  Device Extensions: " << state_->supportedDeviceExtensions.size() << '\n'
+           << "  Cooperative Matrix: "
+           << (supportsCooperativeMatrix() ? "supported" : "not supported")
+           << " (" << state_->cooperativeMatrixSupportInfo.tiles.size() << " tile combinations)\n";
     }
 
     std::vector<GpuInfo> Context::enumerateGpus(){

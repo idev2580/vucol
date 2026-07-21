@@ -30,6 +30,26 @@ namespace socl{
         std::vector<const char*> requiredDeviceExtensions;
     };
 
+    struct CooperativeMatrixTileProperties{
+        std::uint32_t m = 0;
+        std::uint32_t n = 0;
+        std::uint32_t k = 0;
+        vk::ComponentTypeKHR aType = vk::ComponentTypeKHR::eFloat16;
+        vk::ComponentTypeKHR bType = vk::ComponentTypeKHR::eFloat16;
+        vk::ComponentTypeKHR cType = vk::ComponentTypeKHR::eFloat16;
+        vk::ComponentTypeKHR resultType = vk::ComponentTypeKHR::eFloat16;
+        bool saturatingAccumulation = false;
+        vk::ScopeKHR scope = vk::ScopeKHR::eSubgroup;
+    };
+
+    struct CooperativeMatrixSupportInfo{
+        bool extensionSupported = false;
+        bool featureSupported = false;
+        bool robustBufferAccessSupported = false;
+        vk::ShaderStageFlags supportedStages;
+        std::vector<CooperativeMatrixTileProperties> tiles;
+    };
+
     namespace detail{
         struct ContextState{
             vk::Instance instance;
@@ -37,6 +57,7 @@ namespace socl{
             vk::PhysicalDeviceProperties physicalDeviceProperties{};
             GpuInfo gpuInfo;
             std::vector<std::string> supportedDeviceExtensions;
+            CooperativeMatrixSupportInfo cooperativeMatrixSupportInfo;
             vk::Device device;
             vk::Queue queue;
             std::uint32_t queueFamily = 0;
@@ -117,6 +138,8 @@ namespace socl{
         [[nodiscard]] const GpuInfo& gpuInfo() const;
         [[nodiscard]] std::vector<std::string> supportedDeviceExtensions() const;
         [[nodiscard]] bool supportsDeviceExtension(std::string_view extensionName) const;
+        [[nodiscard]] bool supportsCooperativeMatrix() const;
+        [[nodiscard]] const CooperativeMatrixSupportInfo& cooperativeMatrixSupportInfo() const;
         void printGpuInfo(std::ostream& os) const;
 
         [[nodiscard]] static std::vector<GpuInfo> enumerateGpus();

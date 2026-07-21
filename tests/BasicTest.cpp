@@ -105,6 +105,39 @@ TEST(SoclApi, ContextCreateInfoAllowsGpuSelectionAndExtensionRequirements){
     EXPECT_STREQ(createInfo.requiredDeviceExtensions[0], "VK_KHR_storage_buffer_storage_class");
 }
 
+TEST(SoclApi, CooperativeMatrixSupportInfoCarriesTileCombinations){
+    const CooperativeMatrixTileProperties tile{
+        .m = 16,
+        .n = 8,
+        .k = 16,
+        .aType = vk::ComponentTypeKHR::eFloat16,
+        .bType = vk::ComponentTypeKHR::eFloat16,
+        .cType = vk::ComponentTypeKHR::eFloat32,
+        .resultType = vk::ComponentTypeKHR::eFloat32,
+        .saturatingAccumulation = false,
+        .scope = vk::ScopeKHR::eSubgroup,
+    };
+    const CooperativeMatrixSupportInfo info{
+        .extensionSupported = true,
+        .featureSupported = true,
+        .robustBufferAccessSupported = true,
+        .supportedStages = vk::ShaderStageFlagBits::eCompute,
+        .tiles = {tile},
+    };
+
+    ASSERT_EQ(info.tiles.size(), 1u);
+    EXPECT_TRUE(info.extensionSupported);
+    EXPECT_TRUE(info.featureSupported);
+    EXPECT_TRUE(info.robustBufferAccessSupported);
+    EXPECT_TRUE(static_cast<bool>(info.supportedStages & vk::ShaderStageFlagBits::eCompute));
+    EXPECT_EQ(info.tiles[0].m, 16u);
+    EXPECT_EQ(info.tiles[0].n, 8u);
+    EXPECT_EQ(info.tiles[0].k, 16u);
+    EXPECT_EQ(info.tiles[0].aType, vk::ComponentTypeKHR::eFloat16);
+    EXPECT_EQ(info.tiles[0].resultType, vk::ComponentTypeKHR::eFloat32);
+    EXPECT_EQ(info.tiles[0].scope, vk::ScopeKHR::eSubgroup);
+}
+
 TEST(SoclApi, GpuInfoCarriesPrintableDeviceData){
     GpuInfo info{
         .index = 1,
