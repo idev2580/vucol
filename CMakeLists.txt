@@ -37,6 +37,21 @@ elseif(TARGET shaderc_shared)
     set(SOCL_SHADERC_TARGET shaderc_shared)
 elseif(TARGET shaderc)
     set(SOCL_SHADERC_TARGET shaderc)
+elseif(NOT WIN32)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(SOCL_SHADERC_PC QUIET IMPORTED_TARGET shaderc)
+    endif()
+
+    if(TARGET PkgConfig::SOCL_SHADERC_PC)
+        set(SOCL_SHADERC_TARGET PkgConfig::SOCL_SHADERC_PC)
+    else()
+        message(FATAL_ERROR
+            "shaderc was not found. Install a shaderc package that provides a supported "
+            "CMake target (shaderc::shaderc, shaderc::shaderc_shared, shaderc_shared, or "
+            "shaderc), or install a shaderc pkg-config module."
+        )
+    endif()
 elseif(WIN32 AND DEFINED ENV{VULKAN_SDK})
     find_path(SOCL_SHADERC_INCLUDE_DIR
         NAMES shaderc/shaderc.hpp
@@ -86,7 +101,8 @@ else()
     message(FATAL_ERROR
         "shaderc was not found. Install a shaderc package that provides a supported "
         "CMake target (shaderc::shaderc, shaderc::shaderc_shared, shaderc_shared, or "
-        "shaderc). On Windows, ensure VULKAN_SDK points to the Vulkan SDK installation."
+        "shaderc), or install a shaderc pkg-config module. On Windows, ensure VULKAN_SDK "
+        "points to the Vulkan SDK installation."
     )
 endif()
 
