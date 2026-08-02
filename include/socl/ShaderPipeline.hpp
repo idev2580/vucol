@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <span>
 #include <type_traits>
 #include <utility>
@@ -82,6 +83,7 @@ namespace socl{
         std::uint32_t pushConstantSize = 0;
         std::vector<SpecConstant> specConstants;
         const char* entryPoint = "main";
+        std::optional<std::uint32_t> requiredSubgroupSize;
     };
 
     namespace detail{

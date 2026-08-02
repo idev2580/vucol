@@ -50,6 +50,19 @@ namespace socl{
         std::vector<CooperativeMatrixTileProperties> tiles;
     };
 
+    struct SubgroupSupportInfo{
+        std::uint32_t defaultSize = 0;
+        vk::ShaderStageFlags supportedStages;
+        vk::SubgroupFeatureFlags supportedOperations;
+        vk::ShaderStageFlags requiredSizeStages;
+        bool sizeControlSupported = false;
+        bool sizeControlEnabled = false;
+        bool computeFullSubgroupsSupported = false;
+        bool computeFullSubgroupsEnabled = false;
+        std::uint32_t minSize = 0;
+        std::uint32_t maxSize = 0;
+    };
+
     namespace detail{
         struct ContextState{
             vk::Instance instance;
@@ -58,6 +71,7 @@ namespace socl{
             GpuInfo gpuInfo;
             std::vector<std::string> supportedDeviceExtensions;
             CooperativeMatrixSupportInfo cooperativeMatrixSupportInfo;
+            SubgroupSupportInfo subgroupSupportInfo;
             vk::Device device;
             vk::Queue queue;
             std::uint32_t queueFamily = 0;
@@ -140,6 +154,7 @@ namespace socl{
         [[nodiscard]] bool supportsDeviceExtension(std::string_view extensionName) const;
         [[nodiscard]] bool supportsCooperativeMatrix() const;
         [[nodiscard]] const CooperativeMatrixSupportInfo& cooperativeMatrixSupportInfo() const;
+        [[nodiscard]] const SubgroupSupportInfo& subgroupSupportInfo() const;
         void printGpuInfo(std::ostream& os) const;
 
         [[nodiscard]] static std::vector<GpuInfo> enumerateGpus();

@@ -189,6 +189,49 @@ namespace{
         return info;
     }
 
+    socl::SubgroupSupportInfo makeSubgroupSupportInfo(
+        vk::PhysicalDevice physicalDevice,
+        bool sizeControlAvailable){
+        VkPhysicalDeviceSubgroupSizeControlProperties sizeControlProperties{};
+        sizeControlProperties.sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_PROPERTIES;
+
+        VkPhysicalDeviceSubgroupProperties subgroupProperties{};
+        subgroupProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES;
+        subgroupProperties.pNext = sizeControlAvailable ? &sizeControlProperties : nullptr;
+
+        VkPhysicalDeviceProperties2 properties{};
+        properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        properties.pNext = &subgroupProperties;
+        vkGetPhysicalDeviceProperties2(physicalDevice, &properties);
+
+        socl::SubgroupSupportInfo info;
+        info.defaultSize = subgroupProperties.subgroupSize;
+        info.supportedStages = vk::ShaderStageFlags(subgroupProperties.supportedStages);
+        info.supportedOperations =
+            vk::SubgroupFeatureFlags(subgroupProperties.supportedOperations);
+        if(!sizeControlAvailable){
+            return info;
+        }
+
+        VkPhysicalDeviceSubgroupSizeControlFeatures sizeControlFeatures{};
+        sizeControlFeatures.sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES;
+        VkPhysicalDeviceFeatures2 features{};
+        features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        features.pNext = &sizeControlFeatures;
+        vkGetPhysicalDeviceFeatures2(physicalDevice, &features);
+
+        info.requiredSizeStages =
+            vk::ShaderStageFlags(sizeControlProperties.requiredSubgroupSizeStages);
+        info.sizeControlSupported = sizeControlFeatures.subgroupSizeControl == VK_TRUE;
+        info.computeFullSubgroupsSupported =
+            sizeControlFeatures.computeFullSubgroups == VK_TRUE;
+        info.minSize = sizeControlProperties.minSubgroupSize;
+        info.maxSize = sizeControlProperties.maxSubgroupSize;
+        return info;
+    }
+
     std::uint32_t findComputeQueueFamily(vk::PhysicalDevice physicalDevice){
         const auto queueFamilies = physicalDevice.getQueueFamilyProperties();
         for(std::uint32_t i = 0; i < queueFamilies.size(); ++i){
@@ -286,12 +329,39 @@ namespace socl{
         }
 
         auto vkbPhysicalDevice = std::move(vkbPhysicalDevices[createInfo.physicalDeviceIndex]);
-        vkb::DeviceBuilder deviceBuilder(vkbPhysicalDevice);
-        auto vkbDevice = unwrap(deviceBuilder.build(), "vk-bootstrap device creation failed");
-
+        vkbPhysicalDevice.enable_extension_if_present(
+            VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
         state_->physicalDevice = vk::PhysicalDevice(vkbPhysicalDevice.physical_device);
         state_->physicalDeviceProperties = state_->physicalDevice.getProperties();
         state_->supportedDeviceExtensions = enumerateDeviceExtensionNames(state_->physicalDevice);
+
+        const bool subgroupSizeControlAvailable =
+            VK_VERSION_MAJOR(state_->physicalDeviceProperties.apiVersion) > 1 ||
+            (VK_VERSION_MAJOR(state_->physicalDeviceProperties.apiVersion) == 1 &&
+             VK_VERSION_MINOR(state_->physicalDeviceProperties.apiVersion) >= 3) ||
+            containsExtension(state_->supportedDeviceExtensions,
+                              VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
+        state_->subgroupSupportInfo =
+            makeSubgroupSupportInfo(state_->physicalDevice, subgroupSizeControlAvailable);
+
+        VkPhysicalDeviceSubgroupSizeControlFeatures enabledSubgroupFeatures{};
+        enabledSubgroupFeatures.sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES;
+        enabledSubgroupFeatures.subgroupSizeControl =
+            state_->subgroupSupportInfo.sizeControlSupported ? VK_TRUE : VK_FALSE;
+        enabledSubgroupFeatures.computeFullSubgroups =
+            state_->subgroupSupportInfo.computeFullSubgroupsSupported ? VK_TRUE : VK_FALSE;
+
+        vkb::DeviceBuilder deviceBuilder(vkbPhysicalDevice);
+        if(subgroupSizeControlAvailable){
+            deviceBuilder.add_pNext(&enabledSubgroupFeatures);
+        }
+        auto vkbDevice = unwrap(deviceBuilder.build(), "vk-bootstrap device creation failed");
+
+        state_->subgroupSupportInfo.sizeControlEnabled =
+            enabledSubgroupFeatures.subgroupSizeControl == VK_TRUE;
+        state_->subgroupSupportInfo.computeFullSubgroupsEnabled =
+            enabledSubgroupFeatures.computeFullSubgroups == VK_TRUE;
         state_->cooperativeMatrixSupportInfo =
             makeCooperativeMatrixSupportInfo(state_->instance,
                                              state_->physicalDevice,
@@ -370,6 +440,25 @@ namespace socl{
         if(createInfo.spirv.empty()){
             throw std::runtime_error("ShaderPipeline SPIR-V bytecode is empty.");
         }
+        if(createInfo.requiredSubgroupSize){
+            const auto requestedSize = *createInfo.requiredSubgroupSize;
+            const auto& subgroup = state_->subgroupSupportInfo;
+            if(!subgroup.sizeControlEnabled){
+                throw std::runtime_error(
+                    "A required subgroup size was requested, but subgroup size control is not enabled.");
+            }
+            if(!(subgroup.requiredSizeStages & vk::ShaderStageFlagBits::eCompute)){
+                throw std::runtime_error(
+                    "Required subgroup sizes are not supported for compute shaders.");
+            }
+            if(requestedSize == 0 || (requestedSize & (requestedSize - 1)) != 0){
+                throw std::runtime_error("The required subgroup size must be a power of two.");
+            }
+            if(requestedSize < subgroup.minSize || requestedSize > subgroup.maxSize){
+                throw std::runtime_error(
+                    "The required subgroup size is outside the GPU's supported range.");
+            }
+        }
 
         auto state = std::make_shared<detail::ShaderPipelineState>();
         state->context = state_;
@@ -441,6 +530,11 @@ namespace socl{
             .setModule(state->shaderModule)
             .setPName(createInfo.entryPoint ? createInfo.entryPoint : "main")
             .setPSpecializationInfo(specializationEntries.empty() ? nullptr : &specializationInfo);
+        vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo requiredSubgroupSizeInfo;
+        if(createInfo.requiredSubgroupSize){
+            requiredSubgroupSizeInfo.setRequiredSubgroupSize(*createInfo.requiredSubgroupSize);
+            stageInfo.setPNext(&requiredSubgroupSizeInfo);
+        }
 
         vk::ComputePipelineCreateInfo pipelineInfo;
         pipelineInfo
@@ -634,6 +728,10 @@ namespace socl{
 
     const CooperativeMatrixSupportInfo& Context::cooperativeMatrixSupportInfo() const{
         return state_->cooperativeMatrixSupportInfo;
+    }
+
+    const SubgroupSupportInfo& Context::subgroupSupportInfo() const{
+        return state_->subgroupSupportInfo;
     }
 
     void Context::printGpuInfo(std::ostream& os) const{

@@ -59,6 +59,40 @@ TEST(SoclApi, SpecConstantConvenienceApiSupportsScalarTypes){
     EXPECT_EQ(enabled, VK_TRUE);
 }
 
+TEST(SoclApi, ShaderPipelineCreateInfoAllowsOptionalRequiredSubgroupSize){
+    ShaderPipelineCreateInfo defaultInfo;
+    EXPECT_FALSE(defaultInfo.requiredSubgroupSize.has_value());
+
+    ShaderPipelineCreateInfo selectedInfo{
+        .requiredSubgroupSize = 32,
+    };
+    ASSERT_TRUE(selectedInfo.requiredSubgroupSize.has_value());
+    EXPECT_EQ(*selectedInfo.requiredSubgroupSize, 32u);
+}
+
+TEST(SoclApi, SubgroupSupportInfoReportsSupportAndEnablementSeparately){
+    const SubgroupSupportInfo info{
+        .defaultSize = 32,
+        .supportedStages = vk::ShaderStageFlagBits::eCompute,
+        .supportedOperations = vk::SubgroupFeatureFlagBits::eBasic,
+        .requiredSizeStages = vk::ShaderStageFlagBits::eCompute,
+        .sizeControlSupported = true,
+        .sizeControlEnabled = true,
+        .computeFullSubgroupsSupported = true,
+        .computeFullSubgroupsEnabled = true,
+        .minSize = 32,
+        .maxSize = 64,
+    };
+
+    EXPECT_EQ(info.defaultSize, 32u);
+    EXPECT_TRUE(info.sizeControlSupported);
+    EXPECT_TRUE(info.sizeControlEnabled);
+    EXPECT_TRUE(info.computeFullSubgroupsSupported);
+    EXPECT_TRUE(info.computeFullSubgroupsEnabled);
+    EXPECT_EQ(info.minSize, 32u);
+    EXPECT_EQ(info.maxSize, 64u);
+}
+
 TEST(SoclApi, CompileGlslToSpirvReturnsComputeShaderBytecode){
     const char* source = R"(#version 450
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
@@ -71,6 +105,19 @@ void main(){
 
     ASSERT_FALSE(spirv.empty());
     EXPECT_EQ(spirv[0], 0x07230203u);
+}
+
+TEST(SoclApi, ShaderCompileOptionsCarryVulkanAndSpirvTargets){
+    const ShaderCompileOptions defaults;
+    EXPECT_EQ(defaults.vulkanVersion, VulkanVersion::Vulkan11);
+    EXPECT_EQ(defaults.spirvVersion, SpirvVersion::Spirv13);
+
+    const ShaderCompileOptions selected{
+        .vulkanVersion = VulkanVersion::Vulkan13,
+        .spirvVersion = SpirvVersion::Spirv16,
+    };
+    EXPECT_EQ(selected.vulkanVersion, VulkanVersion::Vulkan13);
+    EXPECT_EQ(selected.spirvVersion, SpirvVersion::Spirv16);
 }
 
 TEST(SoclApi, CompileGlslToSpirvReportsInvalidGlsl){
