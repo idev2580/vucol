@@ -93,18 +93,18 @@ int main(int argc, char** argv){
         });
 
         auto descriptorSet = context.createDescriptorSet(pipeline);
-        descriptorSet.bindBuffer(0, bufferA);
-        descriptorSet.bindBuffer(1, bufferB);
-        descriptorSet.bindBuffer(2, bufferOut);
-        descriptorSet.bindBuffer(3, paramsBuffer);
-        descriptorSet.update();
+        descriptorSet.bindBuffer(0, bufferA, socl::BufferAccess::Read);
+        descriptorSet.bindBuffer(1, bufferB, socl::BufferAccess::Read);
+        descriptorSet.bindBuffer(2, bufferOut, socl::BufferAccess::Write);
+        descriptorSet.bindBuffer(3, paramsBuffer, socl::BufferAccess::Read);
 
         context.begin();
         context.use(pipeline);
         context.bind(descriptorSet);
         context.push(params.count);
         context.dispatch((params.count + 63u) / 64u);
-        context.submitAndWait();
+        auto token = context.submitAsync();
+        token.wait();
 
         bufferOut.read(output.data(), bytes);
 

@@ -34,12 +34,17 @@ namespace socl{
         : state_(std::move(state)){
     }
 
-    void DescriptorSet::bindBuffer(std::uint32_t binding, const Buffer& buffer){
+    void DescriptorSet::bindBuffer(std::uint32_t binding,
+                                   const Buffer& buffer,
+                                   BufferAccess access){
         if(!state_ || !state_->pipeline){
             throw std::runtime_error("Cannot bind a buffer to an empty socl::DescriptorSet.");
         }
         if(!buffer.state_){
             throw std::runtime_error("Cannot bind an empty socl::Buffer.");
+        }
+        if(buffer.state_->context != state_->context){
+            throw std::runtime_error("Buffer belongs to a different Context.");
         }
 
         const auto& bindings = state_->pipeline->bindings;
@@ -51,7 +56,10 @@ namespace socl{
         }
 
         const std::size_t index = static_cast<std::size_t>(std::distance(bindings.begin(), it));
-        state_->buffers[index] = buffer.state_;
+        state_->buffers[index] = {
+            .buffer = buffer.state_,
+            .access = access,
+        };
     }
 
     void DescriptorSet::update(){
@@ -65,7 +73,7 @@ namespace socl{
         writes.reserve(state_->buffers.size());
 
         for(std::size_t i = 0; i < state_->pipeline->bindings.size(); ++i){
-            const auto& buffer = state_->buffers[i];
+            const auto& buffer = state_->buffers[i].buffer;
             if(!buffer){
                 throw std::runtime_error("DescriptorSet has an unbound buffer.");
             }

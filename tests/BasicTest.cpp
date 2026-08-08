@@ -139,6 +139,12 @@ TEST(SoclApi, DefaultObjectsAreEmpty){
     EXPECT_EQ(buffer.size(), 0u);
 }
 
+TEST(SoclApi, BufferAccessExposesReadWriteIntent){
+    EXPECT_NE(BufferAccess::Read, BufferAccess::Write);
+    EXPECT_NE(BufferAccess::Read, BufferAccess::ReadWrite);
+    EXPECT_NE(BufferAccess::Write, BufferAccess::ReadWrite);
+}
+
 TEST(SoclApi, ContextCreateInfoAllowsGpuSelectionAndExtensionRequirements){
     ContextCreateInfo createInfo{
         .physicalDeviceIndex = 2,

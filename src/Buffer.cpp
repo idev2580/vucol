@@ -196,6 +196,10 @@ namespace socl{
         if(offset + bytes > size()){
             throw std::out_of_range("Buffer write range is out of bounds.");
         }
+        if(state_->gpuReadClaims != 0 || state_->gpuWriteClaims != 0){
+            throw std::runtime_error(
+                "Cannot write to a Buffer referenced by a recorded or in-flight GPU dispatch.");
+        }
         if(bytes == 0){
             return;
         }
@@ -236,6 +240,10 @@ namespace socl{
         }
         if(offset + bytes > size()){
             throw std::out_of_range("Buffer read range is out of bounds.");
+        }
+        if(state_->gpuWriteClaims != 0){
+            throw std::runtime_error(
+                "Cannot read from a Buffer that a recorded or in-flight GPU dispatch may write.");
         }
         if(bytes == 0){
             return;

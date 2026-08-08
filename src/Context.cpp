@@ -3,6 +3,8 @@
 
 #include <socl/Context.hpp>
 
+#include "DispatchResources.hpp"
+
 #include <VkBootstrap.h>
 
 #include <algorithm>
@@ -392,7 +394,13 @@ namespace socl{
         state_->commandPool = state_->device.createCommandPool(commandPoolInfo);
     }
 
-    Context::~Context() = default;
+    Context::~Context(){
+        recordingResources_.reset();
+        if(state_){
+            state_->currentDescriptorSet.reset();
+            state_->currentPipeline.reset();
+        }
+    }
 
     Buffer Context::createBuffer(std::size_t bytes, BufferType type){
         if(bytes == 0){
@@ -605,6 +613,7 @@ namespace socl{
         state_->recording = true;
         state_->currentPipeline.reset();
         state_->currentDescriptorSet.reset();
+        recordingResources_ = std::make_shared<detail::DispatchResources>();
     }
 
     void Context::use(const ShaderPipeline& pipeline){
@@ -617,6 +626,10 @@ namespace socl{
 
         state_->recordingCommandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute,
                                                     pipeline.state_->pipeline);
+        if(state_->currentDescriptorSet &&
+           state_->currentDescriptorSet->pipeline != pipeline.state_){
+            state_->currentDescriptorSet.reset();
+        }
         state_->currentPipeline = pipeline.state_;
     }
 
@@ -633,12 +646,9 @@ namespace socl{
         if(state_->currentPipeline != descriptorSet.state_->pipeline){
             throw std::runtime_error("DescriptorSet was created for a different ShaderPipeline.");
         }
-
-        state_->recordingCommandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
-                                                          state_->currentPipeline->pipelineLayout,
-                                                          0,
-                                                          descriptorSet.state_->descriptorSet,
-                                                          {});
+        if(descriptorSet.state_->context != state_){
+            throw std::runtime_error("DescriptorSet belongs to a different Context.");
+        }
         state_->currentDescriptorSet = descriptorSet.state_;
     }
 
@@ -675,7 +685,93 @@ namespace socl{
         if(!state_->currentDescriptorSet && !state_->currentPipeline->bindings.empty()){
             throw std::runtime_error("Call Context::bind() before Context::dispatch().");
         }
+        if(!recordingResources_){
+            throw std::runtime_error("The current command recording has no resource tracker.");
+        }
+
+        std::shared_ptr<detail::DescriptorSetSnapshotState> snapshot;
+        std::vector<detail::DispatchBufferUse> dispatchBuffers;
+        if(!state_->currentPipeline->bindings.empty()){
+            if(state_->currentDescriptorSet->pipeline != state_->currentPipeline){
+                throw std::runtime_error(
+                    "The current DescriptorSet belongs to a different ShaderPipeline.");
+            }
+            snapshot = detail::createDescriptorSnapshot(state_->currentDescriptorSet);
+
+            for(const auto& bound : snapshot->buffers){
+                auto* existing = detail::findBufferUse(dispatchBuffers, bound.buffer);
+                if(!existing){
+                    dispatchBuffers.push_back({bound.buffer, bound.access});
+                }else{
+                    existing->access = detail::mergeAccess(existing->access, bound.access);
+                }
+            }
+        }
+
+        for(const auto& use : dispatchBuffers){
+            detail::claimBuffer(*recordingResources_, use.buffer, use.access);
+        }
+
+        if(std::find(recordingResources_->pipelines.begin(),
+                     recordingResources_->pipelines.end(),
+                     state_->currentPipeline) == recordingResources_->pipelines.end()){
+            recordingResources_->pipelines.push_back(state_->currentPipeline);
+        }
+        if(snapshot){
+            recordingResources_->descriptorSets.push_back(snapshot);
+        }
+
+        std::vector<vk::BufferMemoryBarrier> barriers;
+        barriers.reserve(dispatchBuffers.size());
+        for(const auto& current : dispatchBuffers){
+            const auto* previous = detail::findBufferUse(
+                recordingResources_->lastBufferAccesses, current.buffer);
+            if(!previous ||
+               (!detail::accessWrites(previous->access) &&
+                !detail::accessWrites(current.access))){
+                continue;
+            }
+
+            vk::BufferMemoryBarrier barrier;
+            barrier
+                .setSrcAccessMask(detail::toVulkanAccess(previous->access))
+                .setDstAccessMask(detail::toVulkanAccess(current.access))
+                .setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .setBuffer(current.buffer->buffer)
+                .setOffset(0)
+                .setSize(current.buffer->size);
+            barriers.push_back(barrier);
+        }
+        if(!barriers.empty()){
+            state_->recordingCommandBuffer.pipelineBarrier(
+                vk::PipelineStageFlagBits::eComputeShader,
+                vk::PipelineStageFlagBits::eComputeShader,
+                {},
+                {},
+                barriers,
+                {});
+        }
+
+        if(snapshot){
+            state_->recordingCommandBuffer.bindDescriptorSets(
+                vk::PipelineBindPoint::eCompute,
+                state_->currentPipeline->pipelineLayout,
+                0,
+                snapshot->descriptorSet,
+                {});
+        }
         state_->recordingCommandBuffer.dispatch(groupCountX, groupCountY, groupCountZ);
+
+        for(const auto& current : dispatchBuffers){
+            auto* previous = detail::findBufferUse(
+                recordingResources_->lastBufferAccesses, current.buffer);
+            if(!previous){
+                recordingResources_->lastBufferAccesses.push_back(current);
+            }else{
+                previous->access = current.access;
+            }
+        }
     }
 
     DispatchToken Context::submitAsync(){
@@ -697,7 +793,7 @@ namespace socl{
         state_->recording = false;
         state_->currentPipeline.reset();
         state_->currentDescriptorSet.reset();
-        return DispatchToken(state_, fence, submitted);
+        return DispatchToken(state_, fence, submitted, std::move(recordingResources_));
     }
 
     void Context::submitAndWait(){
@@ -786,6 +882,7 @@ namespace socl{
 
     DispatchToken::DispatchToken(DispatchToken&& other) noexcept
         : context_(std::move(other.context_)),
+          resources_(std::move(other.resources_)),
           fence_(std::exchange(other.fence_, nullptr)),
           commandBuffer_(std::exchange(other.commandBuffer_, nullptr)){
     }
@@ -796,6 +893,7 @@ namespace socl{
                 wait();
             }
             context_ = std::move(other.context_);
+            resources_ = std::move(other.resources_);
             fence_ = std::exchange(other.fence_, nullptr);
             commandBuffer_ = std::exchange(other.commandBuffer_, nullptr);
         }
@@ -804,8 +902,10 @@ namespace socl{
 
     DispatchToken::DispatchToken(std::shared_ptr<detail::ContextState> context,
                                  vk::Fence fence,
-                                 vk::CommandBuffer commandBuffer)
+                                 vk::CommandBuffer commandBuffer,
+                                 std::shared_ptr<detail::DispatchResources> resources)
         : context_(std::move(context)),
+          resources_(std::move(resources)),
           fence_(fence),
           commandBuffer_(commandBuffer){
     }
@@ -823,6 +923,7 @@ namespace socl{
         context_->device.freeCommandBuffers(context_->commandPool, commandBuffer_);
         fence_ = nullptr;
         commandBuffer_ = nullptr;
+        resources_.reset();
         context_.reset();
     }
 

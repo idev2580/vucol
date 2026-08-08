@@ -26,6 +26,8 @@ namespace socl{
             vk::DeviceSize size = 0;
             BufferType type = BufferType::Auto;
             bool hostVisible = false;
+            std::size_t gpuReadClaims = 0;
+            std::size_t gpuWriteClaims = 0;
 
             ~BufferState();
         };

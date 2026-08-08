@@ -64,6 +64,8 @@ namespace socl{
     };
 
     namespace detail{
+        struct DispatchResources;
+
         struct ContextState{
             vk::Instance instance;
             vk::PhysicalDevice physicalDevice;
@@ -107,9 +109,11 @@ namespace socl{
         private:
         explicit DispatchToken(std::shared_ptr<detail::ContextState> context,
                                vk::Fence fence,
-                               vk::CommandBuffer commandBuffer);
+                               vk::CommandBuffer commandBuffer,
+                               std::shared_ptr<detail::DispatchResources> resources);
 
         std::shared_ptr<detail::ContextState> context_;
+        std::shared_ptr<detail::DispatchResources> resources_;
         vk::Fence fence_;
         vk::CommandBuffer commandBuffer_;
     };
@@ -131,6 +135,8 @@ namespace socl{
 
         void begin();
         void use(const ShaderPipeline& pipeline);
+        // Selects a logical descriptor set. dispatch() captures its current
+        // buffer bindings into an immutable native descriptor set.
         void bind(const DescriptorSet& descriptorSet);
         void push(const void* data, std::size_t bytes, std::size_t offset = 0);
 
@@ -144,6 +150,7 @@ namespace socl{
                       std::uint32_t groupCountZ = 1);
 
         // submitAsync returns a token so callers can wait for a specific batch.
+        // The token retains every dispatch snapshot and buffer until completion.
         // submitAndWait is the OpenGL-like convenience path for immediate waits.
         DispatchToken submitAsync();
         void submitAndWait();
@@ -161,5 +168,6 @@ namespace socl{
 
         private:
         std::shared_ptr<detail::ContextState> state_;
+        std::shared_ptr<detail::DispatchResources> recordingResources_;
     };
 }
