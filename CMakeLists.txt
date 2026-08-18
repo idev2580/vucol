@@ -9,6 +9,38 @@ endif()
 
 option(SOCL_BUILD_TESTS "Build SOCL tests" ${SOCL_IS_TOP_LEVEL})
 option(SOCL_BUILD_EXAMPLES "Build SOCL examples" ${SOCL_IS_TOP_LEVEL})
+option(SOCL_BUILD_DOCS "Build SOCL API documentation with Doxygen" ON)
+option(SOCL_DOCS_ONLY "Configure only the SOCL API documentation target" OFF)
+
+if(SOCL_DOCS_ONLY)
+    set(SOCL_BUILD_DOCS ON)
+endif()
+
+if(SOCL_BUILD_DOCS)
+    find_package(Doxygen REQUIRED)
+
+    set(DOXYGEN_PROJECT_NAME "SOCL")
+    set(DOXYGEN_PROJECT_BRIEF "Simple Open Compute Library based on Vulkan")
+    set(DOXYGEN_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/docs")
+    set(DOXYGEN_EXTRACT_ALL NO)
+    set(DOXYGEN_EXTRACT_PRIVATE NO)
+    set(DOXYGEN_EXCLUDE_SYMBOLS "socl::detail::*")
+    set(DOXYGEN_WARN_IF_UNDOCUMENTED YES)
+    set(DOXYGEN_WARN_IF_DOC_ERROR YES)
+    set(DOXYGEN_WARN_NO_PARAMDOC YES)
+    set(DOXYGEN_WARN_AS_ERROR YES)
+    set(DOXYGEN_GENERATE_HTML YES)
+    set(DOXYGEN_GENERATE_LATEX NO)
+
+    doxygen_add_docs(socl_docs
+        "${PROJECT_SOURCE_DIR}/include/socl"
+        COMMENT "Generate SOCL public API documentation"
+    )
+endif()
+
+if(SOCL_DOCS_ONLY)
+    return()
+endif()
 
 if(SOCL_IS_TOP_LEVEL)
     set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
