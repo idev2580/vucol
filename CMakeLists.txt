@@ -34,6 +34,7 @@ if(SOCL_BUILD_DOCS)
 
     doxygen_add_docs(socl_docs
         "${PROJECT_SOURCE_DIR}/include/socl"
+        "${PROJECT_SOURCE_DIR}/docs"
         COMMENT "Generate SOCL public API documentation"
     )
 endif()

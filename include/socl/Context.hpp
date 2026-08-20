@@ -188,6 +188,9 @@ namespace socl{
      * Context and all resources created from it are not internally synchronized.
      * Serialize operations that touch the same Context, queue, command pool, or shared
      * resource. Completely independent contexts may be used concurrently.
+     *
+     * @see @ref tutorial_axpy "Tutorial: AXPY and Batched Dispatch"
+     * @see @ref dispatch_snapshots "Dispatch Snapshots and Batched Submission"
      */
     class Context{
         public:
@@ -287,6 +290,7 @@ namespace socl{
          * Synchronous CPU-side recording setup; no GPU work is submitted.
          * @par Resource safety
          * Creates a batch tracker that retains resources claimed by later dispatches.
+         * @see @ref dispatch_snapshots "Dispatch Snapshots and Batched Submission"
          */
         void begin();
 
@@ -370,6 +374,7 @@ namespace socl{
          * Captures immutable descriptors, retains every pipeline and buffer, merges
          * duplicate buffer access modes, and claims buffers against conflicting CPU or
          * other recorded/in-flight GPU access until the batch resources are released.
+         * @see @ref dispatch_snapshots "Dispatch Snapshots and Batched Submission"
          */
         void dispatch(std::uint32_t groupCountX,
                       std::uint32_t groupCountY = 1,
@@ -391,6 +396,7 @@ namespace socl{
          * @par Resource safety
          * Ownership of snapshots, pipelines, buffers, the command buffer, and fence is
          * transferred to the returned token. Discarding a valid token waits in its destructor.
+         * @see @ref dispatch_snapshots "Dispatch Snapshots and Batched Submission"
          */
         DispatchToken submitAsync();
 
