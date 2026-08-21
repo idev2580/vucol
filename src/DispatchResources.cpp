@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -19,6 +21,12 @@ namespace{
 }
 
 namespace socl::detail{
+    GpuTimingState::~GpuTimingState(){
+        if(device && queryPool){
+            device.destroyQueryPool(queryPool);
+        }
+    }
+
     DescriptorSetSnapshotState::~DescriptorSetSnapshotState(){
         if(device && descriptorPool){
             device.destroyDescriptorPool(descriptorPool);
@@ -62,6 +70,18 @@ namespace socl::detail{
             flags |= vk::AccessFlagBits::eShaderWrite;
         }
         return flags;
+    }
+
+    std::uint64_t timestampDelta(std::uint64_t start,
+                                 std::uint64_t end,
+                                 std::uint32_t validBits){
+        if(validBits == 0 || validBits > 64){
+            throw std::invalid_argument("Timestamp valid-bit count must be in [1, 64].");
+        }
+        const std::uint64_t mask = validBits == 64
+            ? std::numeric_limits<std::uint64_t>::max()
+            : (std::uint64_t{1} << validBits) - 1;
+        return (end - start) & mask;
     }
 
     DispatchBufferUse* findBufferUse(

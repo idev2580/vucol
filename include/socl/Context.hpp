@@ -1,8 +1,10 @@
 #pragma once
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <iosfwd>
+#include <optional>
 #include <socl/Buffer.hpp>
 #include <socl/DescriptorSet.hpp>
 #include <socl/ShaderPipeline.hpp>
@@ -13,6 +15,18 @@
 #include <vector>
 
 namespace socl{
+    /** @brief Floating-point GPU duration with nanosecond units. */
+    using GpuDuration = std::chrono::duration<double, std::nano>;
+
+    /** @brief Timestamp-query capabilities for the selected compute queue. */
+    struct GpuTimingSupportInfo{
+        bool synchronization2Supported = false; ///< Whether the GPU supports synchronization2.
+        bool synchronization2Enabled = false; ///< Whether Context enabled synchronization2 automatically.
+        bool timestampSupported = false; ///< Whether the selected compute queue supports timestamps.
+        std::uint32_t timestampValidBits = 0; ///< Number of valid timestamp counter bits.
+        float timestampPeriodNanoseconds = 0.0f; ///< Nanoseconds represented by one timestamp tick.
+    };
+
     /** @brief Descriptive and queue information for one enumerated GPU. */
     struct GpuInfo{
         std::uint32_t index = 0; ///< Index accepted by ContextCreateInfo::physicalDeviceIndex.
@@ -79,6 +93,7 @@ namespace socl{
             std::vector<std::string> supportedDeviceExtensions;
             CooperativeMatrixSupportInfo cooperativeMatrixSupportInfo;
             SubgroupSupportInfo subgroupSupportInfo;
+            GpuTimingSupportInfo gpuTimingSupportInfo;
             vk::Device device;
             vk::Queue queue;
             std::uint32_t queueFamily = 0;
@@ -98,8 +113,9 @@ namespace socl{
      * @brief Move-only completion and lifetime token for one submitted command batch.
      *
      * The token owns the submission fence and command buffer and strongly retains all
-     * captured descriptor snapshots, pipelines, and buffers. wait(), destruction, or
-     * move-assignment of a valid token waits for completion before releasing them.
+     * captured descriptor snapshots, pipelines, buffers, and optional timestamp query.
+     * wait(), destruction, or move-assignment of a valid token waits for completion
+     * before releasing them.
      *
      * @par Thread safety
      * A token is not thread-safe. All access, including destruction, requires external
@@ -147,13 +163,27 @@ namespace socl{
         /**
          * @brief Waits until this submission completes and releases its resources.
          * Calling wait() on an invalid token is a no-op.
-         * @throws std::runtime_error If the Vulkan fence wait fails.
+         * @throws std::runtime_error If the Vulkan fence wait or timed query retrieval fails.
          * @par Synchronization
          * Synchronous and blocking with an infinite fence timeout.
+         * For a timed submission, the duration is cached before resources are released.
          * @par Thread safety
          * Not safe concurrently with any operation on this token or its Context.
          */
         void wait();
+
+        /**
+         * @brief Waits for a timed submission and returns its measured GPU duration.
+         * @return Elapsed device time between the batch's top- and bottom-of-pipe timestamps.
+         * @throws std::runtime_error If this token did not come from beginTimed(), or if
+         *         fence waiting or timestamp result retrieval fails.
+         * @par Synchronization
+         * Synchronous and blocking with an infinite fence timeout. If wait() already
+         * completed, this returns the duration cached during that wait.
+         * @par Thread safety
+         * Not safe concurrently with any operation on this token or its Context.
+         */
+        [[nodiscard]] GpuDuration waitAndGetGpuDuration();
 
         /**
          * @brief Tests whether this token owns a pending or uncollected submission.
@@ -175,6 +205,7 @@ namespace socl{
         std::shared_ptr<detail::DispatchResources> resources_;
         vk::Fence fence_;
         vk::CommandBuffer commandBuffer_;
+        std::optional<GpuDuration> gpuDuration_;
     };
 
     /**
@@ -295,6 +326,21 @@ namespace socl{
         void begin();
 
         /**
+         * @brief Starts a timestamped one-time compute command batch.
+         * @throws std::runtime_error If this Context is already recording or GPU timing
+         *         is unavailable on the selected device and compute queue.
+         * @par Timing scope
+         * Records a top-of-pipe timestamp before application commands. submitAsync()
+         * records a bottom-of-pipe timestamp, so the result covers all commands and
+         * automatic barriers recorded in this batch but excludes CPU submission and
+         * queue-wait latency before the command buffer begins.
+         * @par Feature activation
+         * Context automatically queries and enables synchronization2 when supported;
+         * callers do not need to request an extension or feature manually.
+         */
+        void beginTimed();
+
+        /**
          * @brief Selects and records binding of a compute pipeline.
          * @param pipeline Input pipeline to use; it must be non-empty and belong to
          *        this Context.
@@ -394,8 +440,9 @@ namespace socl{
          * @par Synchronization
          * Queue submission occurs before return, but GPU execution may continue afterward.
          * @par Resource safety
-         * Ownership of snapshots, pipelines, buffers, the command buffer, and fence is
-         * transferred to the returned token. Discarding a valid token waits in its destructor.
+         * Ownership of snapshots, pipelines, buffers, an optional timestamp query, the
+         * command buffer, and fence is transferred to the returned token. Discarding a
+         * valid token waits in its destructor.
          * @see @ref dispatch_snapshots "Dispatch Snapshots and Batched Submission"
          */
         DispatchToken submitAsync();
@@ -408,6 +455,8 @@ namespace socl{
          * Synchronous and blocking; all recorded work is complete on return.
          * @par Resource safety
          * Releases resource claims and captured snapshots only after fence completion.
+         * @note For a timed batch, use submitAsync() followed by
+         *       DispatchToken::waitAndGetGpuDuration() to retain the measured value.
          */
         void submitAndWait();
 
@@ -418,6 +467,23 @@ namespace socl{
          * Safe for concurrent reads when this Context is not being moved or destroyed.
          */
         [[nodiscard]] bool usingIntegratedGpu() const;
+
+        /**
+         * @brief Reports whether timed command batches can be recorded.
+         * @return `true` when synchronization2 is enabled and the selected compute queue
+         *         exposes a usable timestamp counter.
+         * @par Thread safety
+         * Safe for concurrent reads when this Context is not being moved or destroyed.
+         */
+        [[nodiscard]] bool supportsGpuTiming() const;
+
+        /**
+         * @brief Returns GPU timestamp and synchronization2 capability details.
+         * @return Reference valid while the underlying Context state remains alive.
+         * @par Thread safety
+         * Safe for concurrent reads when this Context is not being moved or destroyed.
+         */
+        [[nodiscard]] const GpuTimingSupportInfo& gpuTimingSupportInfo() const;
 
         /**
          * @brief Returns information about the selected GPU.

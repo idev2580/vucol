@@ -1,11 +1,21 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 
 #include <socl/DescriptorSet.hpp>
 
 namespace socl::detail{
+    struct GpuTimingState{
+        vk::Device device;
+        vk::QueryPool queryPool;
+        std::uint32_t timestampValidBits = 0;
+        double timestampPeriodNanoseconds = 0.0;
+
+        ~GpuTimingState();
+    };
+
     struct DescriptorSetSnapshotState{
         vk::Device device;
         vk::DescriptorPool descriptorPool;
@@ -26,6 +36,7 @@ namespace socl::detail{
         std::vector<std::shared_ptr<ShaderPipelineState>> pipelines;
         std::vector<DispatchBufferUse> buffers;
         std::vector<DispatchBufferUse> lastBufferAccesses;
+        std::shared_ptr<GpuTimingState> gpuTiming;
 
         ~DispatchResources();
     };
@@ -34,6 +45,9 @@ namespace socl::detail{
     [[nodiscard]] bool accessWrites(BufferAccess access);
     [[nodiscard]] BufferAccess mergeAccess(BufferAccess left, BufferAccess right);
     [[nodiscard]] vk::AccessFlags toVulkanAccess(BufferAccess access);
+    [[nodiscard]] std::uint64_t timestampDelta(std::uint64_t start,
+                                               std::uint64_t end,
+                                               std::uint32_t validBits);
 
     DispatchBufferUse* findBufferUse(
         std::vector<DispatchBufferUse>& uses,

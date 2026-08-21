@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.23)
 project(socl)
 
 if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
@@ -48,7 +48,7 @@ if(SOCL_IS_TOP_LEVEL)
 endif()
 
 include(FetchContent)
-find_package(Vulkan REQUIRED)
+find_package(Vulkan 1.3 REQUIRED)
 
 if(WIN32 AND DEFINED ENV{VULKAN_SDK})
     find_package(shaderc QUIET CONFIG

@@ -8,6 +8,7 @@
 #include <VkBootstrap.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <ostream>
 #include <stdexcept>
@@ -67,7 +68,7 @@ namespace{
             instanceBuilder
                 .set_app_name("socl")
                 .set_engine_name("socl")
-                .require_api_version(1, 1, 0)
+                .require_api_version(1, 3, 0)
                 .build(),
             "vk-bootstrap instance creation failed");
     }
@@ -234,6 +235,25 @@ namespace{
         return info;
     }
 
+    socl::GpuTimingSupportInfo makeGpuTimingSupportInfo(
+        vk::PhysicalDevice physicalDevice,
+        const vk::PhysicalDeviceProperties& physicalDeviceProperties,
+        std::uint32_t queueFamily,
+        bool synchronization2Supported,
+        bool synchronization2Enabled){
+        const auto queueFamilies = physicalDevice.getQueueFamilyProperties();
+        const std::uint32_t validBits = queueFamilies[queueFamily].timestampValidBits;
+        const float timestampPeriod = physicalDeviceProperties.limits.timestampPeriod;
+
+        socl::GpuTimingSupportInfo info;
+        info.synchronization2Supported = synchronization2Supported;
+        info.synchronization2Enabled = synchronization2Enabled;
+        info.timestampSupported = validBits != 0 && timestampPeriod > 0.0f;
+        info.timestampValidBits = validBits;
+        info.timestampPeriodNanoseconds = timestampPeriod;
+        return info;
+    }
+
     std::uint32_t findComputeQueueFamily(vk::PhysicalDevice physicalDevice){
         const auto queueFamilies = physicalDevice.getQueueFamilyProperties();
         for(std::uint32_t i = 0; i < queueFamilies.size(); ++i){
@@ -281,7 +301,7 @@ namespace{
         vk::PhysicalDeviceVulkan11Features required11{};
         vkb::PhysicalDeviceSelector selector(instance);
         selector
-            .set_minimum_version(1, 1)
+            .set_minimum_version(1, 3)
             .set_required_features_11(required11)
             .prefer_gpu_device_type(vkb::PreferredDeviceType::discrete)
             .require_present(false);
@@ -333,6 +353,13 @@ namespace socl{
         auto vkbPhysicalDevice = std::move(vkbPhysicalDevices[createInfo.physicalDeviceIndex]);
         vkbPhysicalDevice.enable_extension_if_present(
             VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
+        VkPhysicalDeviceSynchronization2Features requestedSynchronization2Features{};
+        requestedSynchronization2Features.sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
+        requestedSynchronization2Features.synchronization2 = VK_TRUE;
+        const bool synchronization2Supported =
+            vkbPhysicalDevice.enable_extension_features_if_present(
+                requestedSynchronization2Features);
         state_->physicalDevice = vk::PhysicalDevice(vkbPhysicalDevice.physical_device);
         state_->physicalDeviceProperties = state_->physicalDevice.getProperties();
         state_->supportedDeviceExtensions = enumerateDeviceExtensionNames(state_->physicalDevice);
@@ -371,6 +398,12 @@ namespace socl{
         state_->device = vk::Device(vkbDevice.device);
         state_->queueFamily = findComputeQueueFamily(state_->physicalDevice);
         state_->queue = state_->device.getQueue(state_->queueFamily, 0);
+        state_->gpuTimingSupportInfo = makeGpuTimingSupportInfo(
+            state_->physicalDevice,
+            state_->physicalDeviceProperties,
+            state_->queueFamily,
+            synchronization2Supported,
+            synchronization2Supported);
         state_->autoBufferUsesHostVisibleMemory =
             state_->physicalDeviceProperties.deviceType == vk::PhysicalDeviceType::eIntegratedGpu &&
             hasDeviceLocalHostVisibleMemory(state_->physicalDevice);
@@ -382,7 +415,7 @@ namespace socl{
             .physicalDevice = state_->physicalDevice,
             .device = state_->device,
             .instance = state_->instance,
-            .vulkanApiVersion = VK_API_VERSION_1_1,
+            .vulkanApiVersion = VK_API_VERSION_1_3,
         };
         checkVk(vmaCreateAllocator(&allocatorInfo, &state_->allocator),
                 "vmaCreateAllocator failed.");
@@ -616,6 +649,36 @@ namespace socl{
         recordingResources_ = std::make_shared<detail::DispatchResources>();
     }
 
+    void Context::beginTimed(){
+        if(state_->recording){
+            throw std::runtime_error("Context is already recording commands.");
+        }
+        if(!supportsGpuTiming()){
+            throw std::runtime_error(
+                "GPU timing requires synchronization2 and timestamp support on the compute queue.");
+        }
+
+        auto timing = std::make_shared<detail::GpuTimingState>();
+        timing->device = state_->device;
+        timing->timestampValidBits = state_->gpuTimingSupportInfo.timestampValidBits;
+        timing->timestampPeriodNanoseconds =
+            static_cast<double>(state_->gpuTimingSupportInfo.timestampPeriodNanoseconds);
+
+        vk::QueryPoolCreateInfo queryPoolInfo;
+        queryPoolInfo
+            .setQueryType(vk::QueryType::eTimestamp)
+            .setQueryCount(2);
+        timing->queryPool = state_->device.createQueryPool(queryPoolInfo);
+
+        begin();
+        recordingResources_->gpuTiming = timing;
+        state_->recordingCommandBuffer.resetQueryPool(timing->queryPool, 0, 2);
+        state_->recordingCommandBuffer.writeTimestamp2(
+            vk::PipelineStageFlagBits2::eTopOfPipe,
+            timing->queryPool,
+            0);
+    }
+
     void Context::use(const ShaderPipeline& pipeline){
         if(!state_->recording){
             throw std::runtime_error("Call Context::begin() before Context::use().");
@@ -778,6 +841,12 @@ namespace socl{
         if(!state_->recording){
             throw std::runtime_error("No command buffer is currently recording.");
         }
+        if(recordingResources_ && recordingResources_->gpuTiming){
+            state_->recordingCommandBuffer.writeTimestamp2(
+                vk::PipelineStageFlagBits2::eBottomOfPipe,
+                recordingResources_->gpuTiming->queryPool,
+                1);
+        }
         state_->recordingCommandBuffer.end();
 
         vk::Fence fence = state_->device.createFence({});
@@ -803,6 +872,15 @@ namespace socl{
 
     bool Context::usingIntegratedGpu() const{
         return state_->physicalDeviceProperties.deviceType == vk::PhysicalDeviceType::eIntegratedGpu;
+    }
+
+    bool Context::supportsGpuTiming() const{
+        const auto& info = state_->gpuTimingSupportInfo;
+        return info.synchronization2Enabled && info.timestampSupported;
+    }
+
+    const GpuTimingSupportInfo& Context::gpuTimingSupportInfo() const{
+        return state_->gpuTimingSupportInfo;
     }
 
     const GpuInfo& Context::gpuInfo() const{
@@ -845,6 +923,8 @@ namespace socl{
            << "  Compute Queue Family: " << info.computeQueueFamily << '\n'
            << "  Compute Queue Count: " << info.computeQueueCount << '\n'
            << "  Device Extensions: " << state_->supportedDeviceExtensions.size() << '\n'
+           << "  GPU Timing: "
+           << (supportsGpuTiming() ? "supported" : "not supported") << '\n'
            << "  Cooperative Matrix: "
            << (supportsCooperativeMatrix() ? "supported" : "not supported")
            << " (" << state_->cooperativeMatrixSupportInfo.tiles.size() << " tile combinations)\n";
@@ -884,7 +964,8 @@ namespace socl{
         : context_(std::move(other.context_)),
           resources_(std::move(other.resources_)),
           fence_(std::exchange(other.fence_, nullptr)),
-          commandBuffer_(std::exchange(other.commandBuffer_, nullptr)){
+          commandBuffer_(std::exchange(other.commandBuffer_, nullptr)),
+          gpuDuration_(std::exchange(other.gpuDuration_, std::nullopt)){
     }
 
     DispatchToken& DispatchToken::operator=(DispatchToken&& other) noexcept{
@@ -896,6 +977,7 @@ namespace socl{
             resources_ = std::move(other.resources_);
             fence_ = std::exchange(other.fence_, nullptr);
             commandBuffer_ = std::exchange(other.commandBuffer_, nullptr);
+            gpuDuration_ = std::exchange(other.gpuDuration_, std::nullopt);
         }
         return *this;
     }
@@ -919,12 +1001,47 @@ namespace socl{
         if(result != vk::Result::eSuccess){
             throw std::runtime_error("waitForFences failed.");
         }
+        if(resources_ && resources_->gpuTiming){
+            std::array<std::uint64_t, 2> timestamps{};
+            result = context_->device.getQueryPoolResults(
+                resources_->gpuTiming->queryPool,
+                0,
+                static_cast<std::uint32_t>(timestamps.size()),
+                sizeof(timestamps),
+                timestamps.data(),
+                sizeof(std::uint64_t),
+                vk::QueryResultFlagBits::e64);
+            if(result != vk::Result::eSuccess){
+                throw std::runtime_error("getQueryPoolResults failed for GPU timing.");
+            }
+
+            const std::uint64_t ticks = detail::timestampDelta(
+                timestamps[0],
+                timestamps[1],
+                resources_->gpuTiming->timestampValidBits);
+            gpuDuration_ = GpuDuration(
+                static_cast<double>(ticks) *
+                resources_->gpuTiming->timestampPeriodNanoseconds);
+        }
         context_->device.destroyFence(fence_);
         context_->device.freeCommandBuffers(context_->commandPool, commandBuffer_);
         fence_ = nullptr;
         commandBuffer_ = nullptr;
         resources_.reset();
         context_.reset();
+    }
+
+    GpuDuration DispatchToken::waitAndGetGpuDuration(){
+        if(!gpuDuration_ &&
+           (!valid() || !resources_ || !resources_->gpuTiming)){
+            throw std::runtime_error(
+                "DispatchToken does not contain a timed GPU submission.");
+        }
+        wait();
+        if(!gpuDuration_){
+            throw std::runtime_error("GPU timing result is unavailable.");
+        }
+        return *gpuDuration_;
     }
 
     bool DispatchToken::valid() const{

@@ -17,9 +17,11 @@ no external shader file or compilation command is required.
 #include <socl/Context.hpp>
 #include <socl/ShaderCompiler.hpp>
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -117,6 +119,45 @@ them for conflict checks and inter-dispatch barriers.
 record commands into that batch. `submitAsync()` closes and submits it, and the
 returned `socl::DispatchToken` retains all resources until completion. See
 @ref dispatch_snapshots for the complete recording and lifetime model.
+
+## Measuring GPU execution time
+
+`socl::Context` automatically queries and enables Vulkan 1.3
+`synchronization2` during device creation when the selected GPU supports it.
+The application does not need to request a timing extension or enable a feature
+manually. Check `supportsGpuTiming()` before starting a timed batch because the
+selected compute queue must also expose timestamp bits:
+
+```cpp
+if (!context.supportsGpuTiming()) {
+    throw std::runtime_error("GPU timing is unavailable");
+}
+
+context.beginTimed();
+context.use(pipeline);
+context.bind(descriptorSet);
+context.push(constants);
+context.dispatch((count + workgroupSize - 1) / workgroupSize);
+
+auto token = context.submitAsync();
+const socl::GpuDuration gpuDuration = token.waitAndGetGpuDuration();
+std::cout << "GPU batch: "
+          << std::chrono::duration<double, std::micro>(gpuDuration).count()
+          << " us\n";
+```
+
+`beginTimed()` records a top-of-pipe timestamp before the batch commands, and
+`submitAsync()` records a bottom-of-pipe timestamp before ending the command
+buffer. The result therefore covers pipeline and descriptor binds, automatic
+barriers, and every dispatch in that batch. It does not include CPU command
+recording, CPU submission overhead, or time spent waiting before this command
+buffer starts executing. Buffer upload or download submissions performed
+outside the batch are also excluded.
+
+Each timed asynchronous batch owns a separate timestamp query pool through its
+`DispatchToken`, so independent timed tokens may remain in flight together.
+Calling ordinary `wait()` on a timed token also collects and caches the timing
+result; a later `waitAndGetGpuDuration()` returns that cached value.
 
 ## Recording several AXPY operations in one submission
 

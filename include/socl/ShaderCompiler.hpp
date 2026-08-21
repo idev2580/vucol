@@ -26,7 +26,7 @@ namespace socl{
 
     /** @brief Target versions used when compiling GLSL compute source. */
     struct ShaderCompileOptions{
-        VulkanVersion vulkanVersion = VulkanVersion::Vulkan11; ///< Target Vulkan environment.
+        VulkanVersion vulkanVersion = VulkanVersion::Vulkan13; ///< Target Vulkan environment.
         SpirvVersion spirvVersion = SpirvVersion::Spirv13;     ///< Target SPIR-V version.
     };
 

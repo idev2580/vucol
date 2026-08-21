@@ -3,8 +3,13 @@
 #include <socl/ShaderCompiler.hpp>
 #include <socl/ShaderPipeline.hpp>
 
+#include "../src/DispatchResources.hpp"
+
+#include <chrono>
 #include <cstring>
 #include <cstdint>
+#include <limits>
+#include <stdexcept>
 #include <vector>
 #include <gtest/gtest.h>
 
@@ -93,6 +98,40 @@ TEST(SoclApi, SubgroupSupportInfoReportsSupportAndEnablementSeparately){
     EXPECT_EQ(info.maxSize, 64u);
 }
 
+TEST(SoclApi, GpuTimingSupportInfoReportsAutomaticFeatureEnablement){
+    const GpuTimingSupportInfo info{
+        .synchronization2Supported = true,
+        .synchronization2Enabled = true,
+        .timestampSupported = true,
+        .timestampValidBits = 48,
+        .timestampPeriodNanoseconds = 1.5f,
+    };
+
+    EXPECT_TRUE(info.synchronization2Supported);
+    EXPECT_TRUE(info.synchronization2Enabled);
+    EXPECT_TRUE(info.timestampSupported);
+    EXPECT_EQ(info.timestampValidBits, 48u);
+    EXPECT_FLOAT_EQ(info.timestampPeriodNanoseconds, 1.5f);
+
+    const GpuDuration duration{1500.0};
+    EXPECT_DOUBLE_EQ(duration.count(), 1500.0);
+    const double durationMicroseconds =
+        std::chrono::duration<double, std::micro>(duration).count();
+    EXPECT_DOUBLE_EQ(durationMicroseconds, 1.5);
+}
+
+TEST(SoclApi, GpuTimestampDeltaHandlesCounterWraparound){
+    EXPECT_EQ(detail::timestampDelta(250, 5, 8), 11u);
+    EXPECT_EQ(detail::timestampDelta(
+                  std::numeric_limits<std::uint64_t>::max() - 2,
+                  1,
+                  64),
+              4u);
+    EXPECT_THROW(
+        static_cast<void>(detail::timestampDelta(0, 1, 0)),
+        std::invalid_argument);
+}
+
 TEST(SoclApi, CompileGlslToSpirvReturnsComputeShaderBytecode){
     const char* source = R"(#version 450
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
@@ -109,7 +148,7 @@ void main(){
 
 TEST(SoclApi, ShaderCompileOptionsCarryVulkanAndSpirvTargets){
     const ShaderCompileOptions defaults;
-    EXPECT_EQ(defaults.vulkanVersion, VulkanVersion::Vulkan11);
+    EXPECT_EQ(defaults.vulkanVersion, VulkanVersion::Vulkan13);
     EXPECT_EQ(defaults.spirvVersion, SpirvVersion::Spirv13);
 
     const ShaderCompileOptions selected{
@@ -136,6 +175,7 @@ TEST(SoclApi, DefaultObjectsAreEmpty){
     EXPECT_FALSE(pipeline);
     EXPECT_FALSE(descriptorSet);
     EXPECT_FALSE(token.valid());
+    EXPECT_THROW(static_cast<void>(token.waitAndGetGpuDuration()), std::runtime_error);
     EXPECT_EQ(buffer.size(), 0u);
 }
 
