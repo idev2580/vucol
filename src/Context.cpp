@@ -4,6 +4,7 @@
 #include <socl/Context.hpp>
 
 #include "DispatchResources.hpp"
+#include "InternalState.hpp"
 
 #include <VkBootstrap.h>
 

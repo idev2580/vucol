@@ -2,7 +2,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <vk_mem_alloc.h>
 #include <vulkan/vulkan.hpp>
 
 namespace socl{
@@ -20,21 +19,7 @@ namespace socl{
 
     namespace detail{
         struct ContextState;
-
-        struct BufferState{
-            std::shared_ptr<ContextState> context;
-            VmaAllocator allocator = VK_NULL_HANDLE;
-            vk::Buffer buffer;
-            VmaAllocation allocation = VK_NULL_HANDLE;
-            VmaAllocationInfo allocationInfo{};
-            vk::DeviceSize size = 0;
-            BufferType type = BufferType::Auto;
-            bool hostVisible = false;
-            std::size_t gpuReadClaims = 0;
-            std::size_t gpuWriteClaims = 0;
-
-            ~BufferState();
-        };
+        struct BufferState;
     }
 
     /**

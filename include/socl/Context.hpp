@@ -10,7 +10,6 @@
 #include <socl/ShaderPipeline.hpp>
 #include <string>
 #include <string_view>
-#include <vk_mem_alloc.h>
 #include <vulkan/vulkan.hpp>
 #include <vector>
 
@@ -84,29 +83,7 @@ namespace socl{
 
     namespace detail{
         struct DispatchResources;
-
-        struct ContextState{
-            vk::Instance instance;
-            vk::PhysicalDevice physicalDevice;
-            vk::PhysicalDeviceProperties physicalDeviceProperties{};
-            GpuInfo gpuInfo;
-            std::vector<std::string> supportedDeviceExtensions;
-            CooperativeMatrixSupportInfo cooperativeMatrixSupportInfo;
-            SubgroupSupportInfo subgroupSupportInfo;
-            GpuTimingSupportInfo gpuTimingSupportInfo;
-            vk::Device device;
-            vk::Queue queue;
-            std::uint32_t queueFamily = 0;
-            vk::CommandPool commandPool;
-            vk::CommandBuffer recordingCommandBuffer;
-            VmaAllocator allocator = VK_NULL_HANDLE;
-            bool autoBufferUsesHostVisibleMemory = false;
-            bool recording = false;
-            std::shared_ptr<ShaderPipelineState> currentPipeline;
-            std::shared_ptr<DescriptorSetState> currentDescriptorSet;
-
-            ~ContextState();
-        };
+        struct ContextState;
     }
 
     /**

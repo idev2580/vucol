@@ -1,6 +1,8 @@
 #include <socl/Buffer.hpp>
 #include <socl/Context.hpp>
 
+#include "InternalState.hpp"
+
 #include <cstddef>
 #include <cstring>
 #include <stdexcept>

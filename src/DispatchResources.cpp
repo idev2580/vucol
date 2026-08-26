@@ -1,4 +1,5 @@
 #include "DispatchResources.hpp"
+#include "InternalState.hpp"
 
 #include <algorithm>
 #include <cstddef>

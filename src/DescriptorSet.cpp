@@ -1,5 +1,7 @@
 #include <socl/DescriptorSet.hpp>
 
+#include "InternalState.hpp"
+
 #include <algorithm>
 #include <stdexcept>
 #include <utility>

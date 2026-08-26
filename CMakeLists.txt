@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.23)
-project(socl)
+project(socl VERSION 0.0.10 LANGUAGES CXX)
+
+include(GNUInstallDirs)
 
 if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
     set(SOCL_IS_TOP_LEVEL ON)
@@ -9,7 +11,7 @@ endif()
 
 option(SOCL_BUILD_TESTS "Build SOCL tests" ${SOCL_IS_TOP_LEVEL})
 option(SOCL_BUILD_EXAMPLES "Build SOCL examples" ${SOCL_IS_TOP_LEVEL})
-option(SOCL_BUILD_DOCS "Build SOCL API documentation with Doxygen" ON)
+option(SOCL_BUILD_DOCS "Build SOCL API documentation with Doxygen" ${SOCL_IS_TOP_LEVEL})
 option(SOCL_DOCS_ONLY "Configure only the SOCL API documentation target" OFF)
 
 if(SOCL_DOCS_ONLY)
@@ -139,32 +141,88 @@ else()
     )
 endif()
 
-FetchContent_Declare(
-  vk-bootstrap
-  GIT_REPOSITORY https://github.com/charles-lunarg/vk-bootstrap.git
-  GIT_TAG        v1.3.302
-)
-FetchContent_Declare(
-  VulkanMemoryAllocator
-  GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
-  GIT_TAG        v3.2.1
-)
-FetchContent_MakeAvailable(vk-bootstrap VulkanMemoryAllocator)
-set_property(TARGET vk-bootstrap PROPERTY POSITION_INDEPENDENT_CODE ON)
+find_package(vk-bootstrap QUIET CONFIG)
+if(NOT TARGET vk-bootstrap::vk-bootstrap)
+    FetchContent_Declare(
+      vk-bootstrap
+      GIT_REPOSITORY https://github.com/charles-lunarg/vk-bootstrap.git
+      GIT_TAG        v1.3.302
+    )
+    FetchContent_MakeAvailable(vk-bootstrap)
+    set_property(TARGET vk-bootstrap PROPERTY POSITION_INDEPENDENT_CODE ON)
+endif()
+
+find_package(VulkanMemoryAllocator 3.2 QUIET CONFIG)
+if(NOT TARGET GPUOpen::VulkanMemoryAllocator)
+    FetchContent_Declare(
+      VulkanMemoryAllocator
+      GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+      GIT_TAG        v3.2.1
+    )
+    FetchContent_MakeAvailable(VulkanMemoryAllocator)
+endif()
 
 add_subdirectory(src)
 
 add_library(socl SHARED ${SOURCES})
+add_library(SOCL::socl ALIAS socl)
 set_target_properties(socl PROPERTIES
+    VERSION ${PROJECT_VERSION}
+    SOVERSION ${PROJECT_VERSION_MAJOR}
     WINDOWS_EXPORT_ALL_SYMBOLS ON
 )
 target_compile_features(socl PUBLIC cxx_std_20)
 target_include_directories(socl
     PUBLIC
         "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
+        "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
-target_link_libraries(socl PUBLIC Vulkan::Vulkan vk-bootstrap::vk-bootstrap GPUOpen::VulkanMemoryAllocator)
-target_link_libraries(socl PRIVATE ${SOCL_SHADERC_TARGET})
+target_link_libraries(socl
+    PUBLIC
+        Vulkan::Vulkan
+    PRIVATE
+        vk-bootstrap::vk-bootstrap
+        GPUOpen::VulkanMemoryAllocator
+        ${SOCL_SHADERC_TARGET}
+)
+
+set(SOCL_INSTALL_CMAKEDIR "${CMAKE_INSTALL_LIBDIR}/cmake/SOCL")
+
+install(TARGETS socl
+    EXPORT SOCLTargets
+    RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+    LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+    ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+)
+
+install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/socl"
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+    FILES_MATCHING PATTERN "*.hpp"
+)
+
+install(EXPORT SOCLTargets
+    FILE SOCLTargets.cmake
+    NAMESPACE SOCL::
+    DESTINATION "${SOCL_INSTALL_CMAKEDIR}"
+)
+
+include(CMakePackageConfigHelpers)
+configure_package_config_file(
+    "${PROJECT_SOURCE_DIR}/cmake/SOCLConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/SOCLConfig.cmake"
+    INSTALL_DESTINATION "${SOCL_INSTALL_CMAKEDIR}"
+)
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/SOCLConfigVersion.cmake"
+    VERSION "${PROJECT_VERSION}"
+    COMPATIBILITY SameMinorVersion
+)
+
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/SOCLConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/SOCLConfigVersion.cmake"
+    DESTINATION "${SOCL_INSTALL_CMAKEDIR}"
+)
 
 if(SOCL_BUILD_EXAMPLES)
     add_subdirectory(examples)
@@ -176,6 +234,7 @@ if(SOCL_BUILD_TESTS)
     endif()
     enable_testing()
 
+    set(INSTALL_GTEST OFF CACHE BOOL "Do not install SOCL's GoogleTest dependency" FORCE)
     FetchContent_Declare(
       googletest
       GIT_REPOSITORY https://github.com/google/googletest.git
