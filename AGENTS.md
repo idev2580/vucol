@@ -22,3 +22,9 @@ The user's work should only be as below.
     - Summary might be changed during the conversation. Summary should contain 'what to implement' and 'how to implement'
 - Except for `prompts` directory, if you want to change any file, you must ask the user to allow that change.
 - Do not run any compile or execution in agent's environment. That's developer's work.
+- Always explain what you did if user asks you to fix or modify some core logics.
+    - Don't skip any explanation with your code modification. You must always summarize your modifications in following format
+        - How the previous implementation worked
+        - Problem situation/cases
+        - How you wanted to solve the problem
+        - Your solution
