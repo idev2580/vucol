@@ -39,6 +39,14 @@ namespace socl{
     void DescriptorSet::bindBuffer(std::uint32_t binding,
                                    const Buffer& buffer,
                                    BufferAccess access){
+        bindBuffer(binding, buffer, 0, buffer.size(), access);
+    }
+
+    void DescriptorSet::bindBuffer(std::uint32_t binding,
+                                   const Buffer& buffer,
+                                   std::size_t offset,
+                                   std::size_t size,
+                                   BufferAccess access){
         if(!state_ || !state_->pipeline){
             throw std::runtime_error("Cannot bind a buffer to an empty socl::DescriptorSet.");
         }
@@ -56,10 +64,36 @@ namespace socl{
         if(it == bindings.end()){
             throw std::runtime_error("Descriptor binding is not part of this pipeline layout.");
         }
+        if(size == 0){
+            throw std::out_of_range("Descriptor buffer range must not be empty.");
+        }
+        const std::size_t bufferSize = buffer.size();
+        if(offset > bufferSize || size > bufferSize - offset){
+            throw std::out_of_range("Descriptor buffer range is out of bounds.");
+        }
+
+        const auto& limits = state_->context->physicalDeviceProperties.limits;
+        const bool uniform = it->type == DescriptorType::UniformBuffer;
+        const vk::DeviceSize alignment = uniform
+            ? limits.minUniformBufferOffsetAlignment
+            : limits.minStorageBufferOffsetAlignment;
+        const vk::DeviceSize maximumRange = uniform
+            ? limits.maxUniformBufferRange
+            : limits.maxStorageBufferRange;
+        if(alignment != 0 && static_cast<vk::DeviceSize>(offset) % alignment != 0){
+            throw std::runtime_error(
+                "Descriptor buffer offset does not satisfy the device alignment requirement.");
+        }
+        if(static_cast<vk::DeviceSize>(size) > maximumRange){
+            throw std::out_of_range(
+                "Descriptor buffer range exceeds the device limit for its descriptor type.");
+        }
 
         const std::size_t index = static_cast<std::size_t>(std::distance(bindings.begin(), it));
         state_->buffers[index] = {
             .buffer = buffer.state_,
+            .offset = static_cast<vk::DeviceSize>(offset),
+            .size = static_cast<vk::DeviceSize>(size),
             .access = access,
         };
     }
@@ -75,17 +109,17 @@ namespace socl{
         writes.reserve(state_->buffers.size());
 
         for(std::size_t i = 0; i < state_->pipeline->bindings.size(); ++i){
-            const auto& buffer = state_->buffers[i].buffer;
-            if(!buffer){
+            const auto& bound = state_->buffers[i];
+            if(!bound.buffer){
                 throw std::runtime_error("DescriptorSet has an unbound buffer.");
             }
 
             const auto& binding = state_->pipeline->bindings[i];
             vk::DescriptorBufferInfo bufferInfo;
             bufferInfo
-                .setBuffer(buffer->buffer)
-                .setOffset(0)
-                .setRange(buffer->size);
+                .setBuffer(bound.buffer->buffer)
+                .setOffset(bound.offset)
+                .setRange(bound.size);
             bufferInfos.push_back(bufferInfo);
 
             vk::WriteDescriptorSet write;

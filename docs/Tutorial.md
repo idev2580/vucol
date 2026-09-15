@@ -113,7 +113,22 @@ int main() {
 Binding zero is declared `Read` because the shader only reads `x`. Binding one
 is `ReadWrite` because AXPY reads the old value of `y` and writes the result back
 to the same buffer. These access declarations must match the shader; SOCL uses
-them for conflict checks and inter-dispatch barriers.
+them for range dependency tracking and automatic barriers.
+
+The same allocation may also supply several shader bindings. Pass a byte offset
+and size before the access mode:
+
+```cpp
+const auto alignment = context.bufferOffsetAlignment(socl::DescriptorType::StorageBuffer);
+const auto stride = (valueSize + alignment - 1) / alignment * alignment;
+descriptorSet.bindBuffer(0, workspace, 0, valueSize, socl::BufferAccess::Read);
+descriptorSet.bindBuffer(1, workspace, stride, valueSize, socl::BufferAccess::Write);
+descriptorSet.bindBuffer(2, workspace, stride * 2, valueSize, socl::BufferAccess::Read);
+```
+
+Offsets must satisfy the selected GPU's descriptor alignment requirements.
+SOCL snapshots the exact ranges and inserts barriers only where ranges overlap
+and at least one access writes.
 
 `begin()` starts one command batch. `use()`, `bind()`, `push()`, and `dispatch()`
 record commands into that batch. `submitAsync()` closes and submits it, and the
@@ -211,6 +226,14 @@ dispatch observes the first dispatch's write when both uses are correctly
 declared `ReadWrite`.
 
 Wait for the returned token before reading any `y` buffer written by the batch.
+CPU reads and writes are rejected while any uncollected submission references
+the buffer, including a read-only GPU submission.
 To execute the same logical plan again, call `begin()`, replay the job loop, and
 call `submitAsync()` again. A completed command buffer cannot be resubmitted by
 calling `submitAsync()` a second time without a new recording.
+
+Several batches may nevertheless be submitted without waiting between them.
+They execute on the Context's queue, and SOCL carries range access state across
+submission boundaries so a later batch receives the required RAW, WAR, or WAW
+barrier. Retain each returned token and collect all submissions that reference a
+buffer before accessing that buffer from the CPU.

@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -10,9 +11,9 @@ namespace socl{
     /**
      * @brief Declares how a dispatch accesses a bound buffer.
      *
-     * SOCL uses this declaration to reject conflicting CPU/GPU accesses and insert
-     * dependencies between dispatches. Supplying a weaker mode than the shader's
-     * actual access is invalid and can defeat those safeguards.
+     * SOCL uses this declaration to insert dependencies between dispatches and
+     * submissions. Supplying a weaker mode than the shader's actual access is invalid
+     * and can defeat those safeguards.
      */
     enum class BufferAccess{
         Read,      ///< The shader reads but does not write the buffer.
@@ -23,6 +24,14 @@ namespace socl{
     namespace detail{
         struct DescriptorBufferBinding{
             std::shared_ptr<BufferState> buffer;
+            vk::DeviceSize offset = 0;
+            vk::DeviceSize size = 0;
+            BufferAccess access = BufferAccess::ReadWrite;
+        };
+
+        struct BufferAccessRange{
+            vk::DeviceSize offset = 0;
+            vk::DeviceSize size = 0;
             BufferAccess access = BufferAccess::ReadWrite;
         };
 
@@ -96,6 +105,8 @@ namespace socl{
          * @param access Shader access that the dispatch will perform on @p buffer.
          * @throws std::runtime_error If either handle is empty, the contexts differ,
          *         or @p binding is absent from the pipeline layout.
+         * @throws std::out_of_range If the whole buffer exceeds the descriptor type's
+         *         maximum range.
          * @par Synchronization
          * Synchronous host-side state update; no GPU command is recorded or submitted.
          * @par Thread safety
@@ -106,6 +117,30 @@ namespace socl{
          */
         void bindBuffer(std::uint32_t binding,
                         const Buffer& buffer,
+                        BufferAccess access = BufferAccess::ReadWrite);
+
+        /**
+         * @brief Assigns a byte range of a buffer to one shader binding.
+         * @param binding Binding number declared in the associated pipeline.
+         * @param buffer Buffer containing the range. It must belong to the same Context.
+         * @param offset First byte of the shader-visible range.
+         * @param size Number of shader-visible bytes; must be greater than zero.
+         * @param access Shader access that the dispatch will perform on the range.
+         * @throws std::runtime_error If either handle is empty, the contexts differ,
+         *         the binding is absent, or the offset violates the descriptor type's
+         *         device alignment requirement.
+         * @throws std::out_of_range If the range exceeds the buffer or the descriptor
+         *         type's maximum range.
+         * @par Synchronization
+         * Synchronous host-side state update; no GPU command is recorded or submitted.
+         * @par Resource safety
+         * Context::dispatch() snapshots the exact range and declared access. Rebinding
+         * this logical descriptor does not modify an already recorded dispatch.
+         */
+        void bindBuffer(std::uint32_t binding,
+                        const Buffer& buffer,
+                        std::size_t offset,
+                        std::size_t size,
                         BufferAccess access = BufferAccess::ReadWrite);
 
         /**

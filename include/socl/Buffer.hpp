@@ -28,7 +28,7 @@ namespace socl{
      * Copies share the same Vulkan buffer and allocation. The underlying resource
      * remains alive while any Buffer, descriptor snapshot, recorded batch, or
      * DispatchToken references it. CPU accesses are range checked and are rejected
-     * when they conflict with a recorded or in-flight GPU access.
+     * while any uncollected GPU submission references the buffer.
      *
      * @par Thread safety
      * Different buffers may be used concurrently when their owning contexts are not
@@ -117,17 +117,17 @@ namespace socl{
          * @param bytes Number of bytes to copy.
          * @param offset Destination byte offset in this buffer.
          * @throws std::runtime_error If the handle is empty, mapping or a Vulkan
-         *         operation fails, or any recorded/in-flight GPU access claims the buffer.
+         *         operation fails, or an uncollected GPU submission claims the buffer.
          * @throws std::out_of_range If the requested range exceeds size().
-         * @warning @p offset plus @p bytes must be representable by std::size_t.
          * @par Synchronization
          * Synchronous. Host-visible memory is updated before return. Device-local
          * memory is updated through a staging copy and the method waits for that copy.
          * @par Thread safety
          * Not safe to call concurrently on the same buffer or its aliases.
          * @par Resource safety
-         * The operation refuses to race with GPU reads or writes. Staging resources
-         * and their command buffer remain alive until the transfer fence completes.
+         * The operation refuses to overlap any submitted GPU use of this buffer.
+         * Staging resources and their command buffer remain alive until the transfer
+         * fence completes.
          */
         void write(const void* data, std::size_t bytes, std::size_t offset = 0);
 
@@ -138,17 +138,16 @@ namespace socl{
          * @param bytes Number of bytes to copy.
          * @param offset Source byte offset in this buffer.
          * @throws std::runtime_error If the handle is empty, mapping or a Vulkan
-         *         operation fails, or a recorded/in-flight GPU write claims the buffer.
+         *         operation fails, or an uncollected GPU submission claims the buffer.
          * @throws std::out_of_range If the requested range exceeds size().
-         * @warning @p offset plus @p bytes must be representable by std::size_t.
          * @par Synchronization
          * Synchronous. Device-local memory is read through a staging copy whose fence
          * is waited before this method returns.
          * @par Thread safety
          * Not safe to call concurrently on the same buffer or its aliases.
          * @par Resource safety
-         * Concurrent GPU readers are permitted, but a possible GPU writer causes the
-         * operation to fail instead of exposing incomplete data.
+         * The operation refuses to overlap GPU reads as well as GPU writes. Call
+         * DispatchToken::wait() for every submission using this buffer before reading.
          */
         void read(void* data, std::size_t bytes, std::size_t offset = 0) const;
 

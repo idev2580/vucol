@@ -292,12 +292,23 @@ namespace socl{
         DescriptorSet createDescriptorSet(const ShaderPipeline& pipeline);
 
         /**
+         * @brief Returns the required byte alignment for a buffer descriptor offset.
+         * @param type Shader descriptor type whose alignment is requested.
+         * @return The selected device's uniform- or storage-buffer offset alignment.
+         *         UnifiedPreferred uses the storage-buffer requirement.
+         * @par Thread safety
+         * Safe for concurrent reads when this Context is not being moved or destroyed.
+         */
+        [[nodiscard]] std::size_t bufferOffsetAlignment(DescriptorType type) const;
+
+        /**
          * @brief Starts recording a one-time compute command batch.
          * @throws std::runtime_error If this Context is already recording.
          * @par Synchronization
          * Synchronous CPU-side recording setup; no GPU work is submitted.
          * @par Resource safety
-         * Creates a batch tracker that retains resources claimed by later dispatches.
+         * Creates a batch tracker that retains resources captured by later dispatches.
+         * CPU-access claims are activated only when the batch is submitted.
          * @see @ref dispatch_snapshots "Dispatch Snapshots and Batched Submission"
          */
         void begin();
@@ -375,7 +386,7 @@ namespace socl{
          * @param groupCountY Number of workgroups in the Y dimension.
          * @param groupCountZ Number of workgroups in the Z dimension.
          * @throws std::runtime_error If required recording, pipeline, descriptor, or
-         *         buffer state is missing, incompatible, or conflicts with another batch.
+         *         buffer state is missing or incompatible.
          * @par Recording model
          * Every call immediately copies the current logical DescriptorSet bindings into
          * a new immutable native descriptor snapshot. It then records both the command
@@ -391,12 +402,14 @@ namespace socl{
          * submitAsync() does not reconstruct or change these per-dispatch bindings.
          * @par Synchronization
          * Synchronous command recording; execution begins only after submission.
-         * Conflicting buffer accesses between dispatches in this batch receive Vulkan
-         * compute-to-compute memory barriers; read-after-read needs no barrier.
+         * Conflicting accesses to overlapping buffer ranges receive Vulkan
+         * compute-to-compute memory barriers. The comparison includes earlier
+         * dispatches in this batch and the last submitted access to each range on this
+         * Context's queue; read-after-read needs no barrier.
          * @par Resource safety
-         * Captures immutable descriptors, retains every pipeline and buffer, merges
-         * duplicate buffer access modes, and claims buffers against conflicting CPU or
-         * other recorded/in-flight GPU access until the batch resources are released.
+         * Captures immutable descriptors, including buffer offsets and sizes, and
+         * retains every pipeline and buffer. CPU access is still allowed while the
+         * batch is only being recorded.
          * @see @ref dispatch_snapshots "Dispatch Snapshots and Batched Submission"
          */
         void dispatch(std::uint32_t groupCountX,
@@ -417,9 +430,10 @@ namespace socl{
          * @par Synchronization
          * Queue submission occurs before return, but GPU execution may continue afterward.
          * @par Resource safety
-         * Ownership of snapshots, pipelines, buffers, an optional timestamp query, the
-         * command buffer, and fence is transferred to the returned token. Discarding a
-         * valid token waits in its destructor.
+         * Before queue submission, every captured buffer receives one CPU-access claim
+         * for this batch. Ownership of snapshots, pipelines, buffers, those claims, an
+         * optional timestamp query, the command buffer, and fence is transferred to the
+         * returned token. Discarding a valid token waits in its destructor.
          * @see @ref dispatch_snapshots "Dispatch Snapshots and Batched Submission"
          */
         DispatchToken submitAsync();

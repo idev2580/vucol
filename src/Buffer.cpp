@@ -195,12 +195,12 @@ namespace socl{
         if(!state_){
             throw std::runtime_error("Cannot write to an empty socl::Buffer.");
         }
-        if(offset + bytes > size()){
+        if(offset > size() || bytes > size() - offset){
             throw std::out_of_range("Buffer write range is out of bounds.");
         }
-        if(state_->gpuReadClaims != 0 || state_->gpuWriteClaims != 0){
+        if(state_->gpuUseClaims != 0){
             throw std::runtime_error(
-                "Cannot write to a Buffer referenced by a recorded or in-flight GPU dispatch.");
+                "Cannot write to a Buffer referenced by an uncollected GPU submission.");
         }
         if(bytes == 0){
             return;
@@ -240,12 +240,12 @@ namespace socl{
         if(!state_){
             throw std::runtime_error("Cannot read from an empty socl::Buffer.");
         }
-        if(offset + bytes > size()){
+        if(offset > size() || bytes > size() - offset){
             throw std::out_of_range("Buffer read range is out of bounds.");
         }
-        if(state_->gpuWriteClaims != 0){
+        if(state_->gpuUseClaims != 0){
             throw std::runtime_error(
-                "Cannot read from a Buffer that a recorded or in-flight GPU dispatch may write.");
+                "Cannot read from a Buffer referenced by an uncollected GPU submission.");
         }
         if(bytes == 0){
             return;

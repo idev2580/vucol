@@ -5,7 +5,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace{
@@ -18,6 +20,13 @@ namespace{
                 return vk::DescriptorType::eStorageBuffer;
         }
         return vk::DescriptorType::eStorageBuffer;
+    }
+
+    vk::DeviceSize rangeEnd(const socl::detail::DispatchBufferUse& use){
+        if(use.size > std::numeric_limits<vk::DeviceSize>::max() - use.offset){
+            throw std::out_of_range("Buffer access range end is not representable.");
+        }
+        return use.offset + use.size;
     }
 }
 
@@ -35,14 +44,7 @@ namespace socl::detail{
     }
 
     DispatchResources::~DispatchResources(){
-        for(const auto& use : buffers){
-            if(accessReads(use.access)){
-                --use.buffer->gpuReadClaims;
-            }
-            if(accessWrites(use.access)){
-                --use.buffer->gpuWriteClaims;
-            }
-        }
+        releaseBufferClaims(*this);
     }
 
     bool accessReads(BufferAccess access){
@@ -85,67 +87,168 @@ namespace socl::detail{
         return (end - start) & mask;
     }
 
-    DispatchBufferUse* findBufferUse(
-        std::vector<DispatchBufferUse>& uses,
-        const std::shared_ptr<BufferState>& buffer){
-        const auto found = std::find_if(uses.begin(), uses.end(), [&](const auto& use){
-            return use.buffer == buffer;
-        });
-        return found == uses.end() ? nullptr : &*found;
+    bool rangesOverlap(const DispatchBufferUse& left,
+                       const DispatchBufferUse& right){
+        return left.buffer == right.buffer &&
+               left.offset < rangeEnd(right) &&
+               right.offset < rangeEnd(left);
     }
 
-    const DispatchBufferUse* findBufferUse(
-        const std::vector<DispatchBufferUse>& uses,
-        const std::shared_ptr<BufferState>& buffer){
-        const auto found = std::find_if(uses.begin(), uses.end(), [&](const auto& use){
-            return use.buffer == buffer;
-        });
-        return found == uses.end() ? nullptr : &*found;
+    std::vector<DispatchBufferUse> normalizeBufferUses(
+        const std::vector<DispatchBufferUse>& uses){
+        std::vector<DispatchBufferUse> normalized;
+        std::vector<std::shared_ptr<BufferState>> visitedBuffers;
+
+        // Split overlapping bindings into disjoint intervals so each byte range has
+        // one combined access mode for the dispatch.
+        for(const auto& first : uses){
+            if(!first.buffer){
+                throw std::invalid_argument("A buffer access cannot reference an empty buffer.");
+            }
+            if(first.size == 0){
+                throw std::invalid_argument("A buffer access range cannot be empty.");
+            }
+            if(std::find(visitedBuffers.begin(), visitedBuffers.end(), first.buffer) !=
+               visitedBuffers.end()){
+                continue;
+            }
+            visitedBuffers.push_back(first.buffer);
+
+            std::vector<vk::DeviceSize> boundaries;
+            for(const auto& use : uses){
+                if(use.buffer == first.buffer){
+                    boundaries.push_back(use.offset);
+                    boundaries.push_back(rangeEnd(use));
+                }
+            }
+            std::sort(boundaries.begin(), boundaries.end());
+            boundaries.erase(std::unique(boundaries.begin(), boundaries.end()), boundaries.end());
+
+            for(std::size_t i = 1; i < boundaries.size(); ++i){
+                const vk::DeviceSize begin = boundaries[i - 1];
+                const vk::DeviceSize end = boundaries[i];
+                std::optional<BufferAccess> combined;
+                for(const auto& use : uses){
+                    if(use.buffer == first.buffer &&
+                       use.offset <= begin && end <= rangeEnd(use)){
+                        combined = combined
+                            ? mergeAccess(*combined, use.access)
+                            : use.access;
+                    }
+                }
+                if(!combined){
+                    continue;
+                }
+
+                if(!normalized.empty() &&
+                   normalized.back().buffer == first.buffer &&
+                   normalized.back().access == *combined &&
+                   rangeEnd(normalized.back()) == begin){
+                    normalized.back().size += end - begin;
+                }else{
+                    normalized.push_back({first.buffer, begin, end - begin, *combined});
+                }
+            }
+        }
+        return normalized;
     }
 
-    void claimBuffer(DispatchResources& resources,
-                     const std::shared_ptr<BufferState>& buffer,
-                     BufferAccess access){
-        DispatchBufferUse* existing = findBufferUse(resources.buffers, buffer);
-        if(!existing){
-            const bool conflicts = accessWrites(access)
-                ? buffer->gpuReadClaims != 0 || buffer->gpuWriteClaims != 0
-                : buffer->gpuWriteClaims != 0;
-            if(conflicts){
-                throw std::runtime_error(
-                    "Buffer is still referenced by a conflicting GPU command batch.");
-            }
-
-            resources.buffers.push_back({buffer, access});
-            if(accessReads(access)){
-                ++buffer->gpuReadClaims;
-            }
-            if(accessWrites(access)){
-                ++buffer->gpuWriteClaims;
-            }
+    void trackBuffer(DispatchResources& resources,
+                     const std::shared_ptr<BufferState>& buffer){
+        if(std::find(resources.buffers.begin(), resources.buffers.end(), buffer) !=
+           resources.buffers.end()){
             return;
         }
+        resources.buffers.push_back(buffer);
+        for(const auto& access : buffer->lastQueueAccesses){
+            resources.lastBufferAccesses.push_back({
+                buffer,
+                access.offset,
+                access.size,
+                access.access,
+            });
+        }
+    }
 
-        const BufferAccess combined = mergeAccess(existing->access, access);
-        const std::size_t externalReaders =
-            buffer->gpuReadClaims - (accessReads(existing->access) ? 1u : 0u);
-        const std::size_t externalWriters =
-            buffer->gpuWriteClaims - (accessWrites(existing->access) ? 1u : 0u);
-        const bool conflicts = accessWrites(combined)
-            ? externalReaders != 0 || externalWriters != 0
-            : externalWriters != 0;
-        if(conflicts){
-            throw std::runtime_error(
-                "Buffer is still referenced by a conflicting GPU command batch.");
-        }
+    void recordBufferAccesses(DispatchResources& resources,
+                              const std::vector<DispatchBufferUse>& accesses){
+        for(const auto& current : normalizeBufferUses(accesses)){
+            std::vector<DispatchBufferUse> updated;
+            updated.reserve(resources.lastBufferAccesses.size() + 2);
+            const vk::DeviceSize currentEnd = rangeEnd(current);
 
-        if(accessReads(combined) && !accessReads(existing->access)){
-            ++buffer->gpuReadClaims;
+            // Overlay only the intersecting interval. Unchanged pieces keep their
+            // earlier access so an unrelated dispatch cannot hide a dependency.
+            for(const auto& previous : resources.lastBufferAccesses){
+                if(!rangesOverlap(previous, current)){
+                    updated.push_back(previous);
+                    continue;
+                }
+
+                const vk::DeviceSize previousEnd = rangeEnd(previous);
+                if(previous.offset < current.offset){
+                    updated.push_back({
+                        previous.buffer,
+                        previous.offset,
+                        current.offset - previous.offset,
+                        previous.access,
+                    });
+                }
+                if(currentEnd < previousEnd){
+                    updated.push_back({
+                        previous.buffer,
+                        currentEnd,
+                        previousEnd - currentEnd,
+                        previous.access,
+                    });
+                }
+            }
+            updated.push_back(current);
+            resources.lastBufferAccesses = normalizeBufferUses(updated);
         }
-        if(accessWrites(combined) && !accessWrites(existing->access)){
-            ++buffer->gpuWriteClaims;
+    }
+
+    std::vector<BufferAccessCommit> prepareBufferAccessCommits(
+        const DispatchResources& resources){
+        std::vector<BufferAccessCommit> commits;
+        commits.reserve(resources.buffers.size());
+        for(const auto& buffer : resources.buffers){
+            BufferAccessCommit commit;
+            commit.buffer = buffer;
+            for(const auto& access : resources.lastBufferAccesses){
+                if(access.buffer == buffer){
+                    commit.accesses.push_back({access.offset, access.size, access.access});
+                }
+            }
+            commits.push_back(std::move(commit));
         }
-        existing->access = combined;
+        return commits;
+    }
+
+    void commitBufferAccesses(std::vector<BufferAccessCommit> commits){
+        for(auto& commit : commits){
+            commit.buffer->lastQueueAccesses = std::move(commit.accesses);
+        }
+    }
+
+    void activateBufferClaims(DispatchResources& resources){
+        if(resources.bufferClaimsActive){
+            throw std::logic_error("GPU buffer claims are already active for this submission.");
+        }
+        for(const auto& buffer : resources.buffers){
+            ++buffer->gpuUseClaims;
+        }
+        resources.bufferClaimsActive = true;
+    }
+
+    void releaseBufferClaims(DispatchResources& resources) noexcept{
+        if(!resources.bufferClaimsActive){
+            return;
+        }
+        for(const auto& buffer : resources.buffers){
+            --buffer->gpuUseClaims;
+        }
+        resources.bufferClaimsActive = false;
     }
 
     std::shared_ptr<DescriptorSetSnapshotState>
@@ -197,8 +300,8 @@ namespace socl::detail{
             vk::DescriptorBufferInfo bufferInfo;
             bufferInfo
                 .setBuffer(bound.buffer->buffer)
-                .setOffset(0)
-                .setRange(bound.buffer->size);
+                .setOffset(bound.offset)
+                .setRange(bound.size);
             bufferInfos.push_back(bufferInfo);
 
             vk::WriteDescriptorSet write;

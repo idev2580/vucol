@@ -28,9 +28,9 @@ The following state is preserved for every recorded dispatch:
 - **Workgroup counts.** The `groupCountX`, `groupCountY`, and `groupCountZ`
   arguments are encoded directly into the recorded dispatch command.
 - **Buffer lifetime and access metadata.** Captured buffers are retained until
-  the batch completes. SOCL merges access modes for repeated use in a batch,
-  prevents conflicting CPU or other-batch access, and records compute-to-compute
-  buffer barriers between dispatches when either adjacent use writes.
+  the batch completes. SOCL preserves each binding's byte offset, byte size, and
+  access mode. It records compute-to-compute buffer barriers for overlapping
+  ranges when either access writes.
 
 Push constants require one distinction: `socl::Context::push()` copies its bytes
 directly into a Vulkan push-constant command when `push()` is called. They are
@@ -89,8 +89,35 @@ context.dispatch(secondGroups);      // captures the new bindings
 ```
 
 Changing a descriptor binding is different from changing the contents of a
-captured buffer. Buffer reads and writes remain subject to SOCL's recorded and
-in-flight access checks until the owning batch completes.
+captured buffer. Recording a batch does not itself add a CPU-access claim, so
+CPU reads and writes remain allowed unless an earlier uncollected submission
+already uses that buffer. `submitAsync()` claims every buffer used by the new
+batch, and CPU access is rejected until every submitted claim has been collected
+by waiting for or destroying its `DispatchToken`.
+
+## Buffer ranges
+
+The whole-buffer `bindBuffer()` overload remains available. A second overload
+binds one byte range of the same allocation:
+
+```cpp
+const auto alignment = context.bufferOffsetAlignment(socl::DescriptorType::StorageBuffer);
+const auto stride = (valueSize + alignment - 1) / alignment * alignment;
+set.bindBuffer(0, storage, 0, valueSize, socl::BufferAccess::Read);
+set.bindBuffer(1, storage, stride, valueSize, socl::BufferAccess::Write);
+set.bindBuffer(2, storage, stride * 2, valueSize, socl::BufferAccess::Read);
+```
+
+Each dispatch snapshot retains these offsets and sizes. The shader sees offset
+zero at the beginning of each bound range. A binding rejects empty or
+out-of-bounds ranges, offsets that violate the device's storage/uniform buffer
+alignment, and ranges larger than the corresponding descriptor limit. Use
+`Context::bufferOffsetAlignment()` when laying out adjacent ranges.
+
+GPU dependency tracking is range based. SOCL emits no barrier for disjoint
+ranges or read-after-read. RAW, WAR, and WAW dependencies over intersecting
+ranges receive a barrier covering their intersection. Access state is retained
+independently for untouched portions of a buffer.
 
 ## Recording lifecycle and execution plans
 
@@ -152,10 +179,10 @@ separate submissions and prevents SOCL from recording the whole operator graph
 as one ordered batch with automatic inter-dispatch barriers.
 
 After one asynchronous execution has been submitted, another batch may be begun
-on the same context while the first token is still valid. This is useful for
-non-conflicting resources. If the next execution claims a buffer in a way that
-conflicts with the recorded or in-flight batch, SOCL rejects the dispatch. Wait
-for the earlier token before replaying the plan with those buffers.
+on the same context while the first token is still valid. Both submissions use
+the Context's single queue and may reference the same buffers. The next batch's
+dispatches compare their ranges with the last accesses submitted to that queue,
+so SOCL records the required submission-boundary barriers without a CPU wait.
 
 ## One batch versus separate submissions
 
@@ -174,8 +201,8 @@ They produce the same computed values when all of the following are true:
 - Every buffer access is declared accurately with `socl::BufferAccess`.
 - No host operation, other queue work, or external synchronization changes or
   observes relevant state at the boundary between A and B.
-- In the separate-submission version, A is complete before conflicting buffers
-  are reused by B.
+- The separate submissions use the same SOCL Context and therefore the same
+  Vulkan queue.
 
 The two forms do not have identical synchronization behavior:
 
@@ -183,16 +210,15 @@ The two forms do not have identical synchronization behavior:
   the required compute-to-compute buffer barriers from their declared access
   modes. The GPU executes the recorded commands in order after one submission.
 - Separate submissions create separate command buffers, fences, resource
-  trackers, and submission boundaries. For conflicting buffer use, wait for the
-  first `socl::DispatchToken` (or use `socl::Context::submitAndWait()`) before
-  recording the second dispatch. Otherwise SOCL rejects the conflicting buffer
-  claim while the first batch remains recorded or in flight.
+  trackers, and submission boundaries. SOCL carries the last range access state
+  across those boundaries and records dependencies in the later command buffer.
+  Waiting between GPU submissions is not required, even when they share buffers.
 - A wait between submissions permits host-side reads, writes, or decisions and
   introduces a CPU/GPU synchronization point. A single batch has no such host
   intervention between its dispatches.
-- Disjoint read-only or otherwise non-conflicting work may be submitted without
-  waiting, but this is not equivalent to adding a completion boundary between
-  the dispatches.
+- CPU `Buffer::read()` and `Buffer::write()` remain prohibited while any
+  uncollected submission references that buffer, regardless of the submitted
+  range or access mode.
 
 Use a single batch when the operations form a fixed GPU-side sequence. Use
 separate submissions when the host must observe completion, access results, or
@@ -202,6 +228,8 @@ decide what to submit next.
 
 The `socl::DispatchToken` returned by `submitAsync()` owns the submitted command
 buffer and fence and retains all captured descriptor snapshots, pipelines, and
-buffers. `socl::DispatchToken::wait()`, token destruction, or replacement of a
-valid token waits for GPU completion before those retained resources are
-released.
+buffers. It also owns one CPU-access claim for each distinct buffer in the
+submission. `socl::DispatchToken::wait()`, token destruction, or replacement of
+a valid token waits for GPU completion before those retained resources and
+claims are released. If several uncollected submissions use one buffer, all of
+their claims must be released before CPU access is allowed.

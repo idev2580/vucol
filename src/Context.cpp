@@ -629,6 +629,14 @@ namespace socl{
         return DescriptorSet(std::move(state));
     }
 
+    std::size_t Context::bufferOffsetAlignment(DescriptorType type) const{
+        const auto& limits = state_->physicalDeviceProperties.limits;
+        const vk::DeviceSize alignment = type == DescriptorType::UniformBuffer
+            ? limits.minUniformBufferOffsetAlignment
+            : limits.minStorageBufferOffsetAlignment;
+        return static_cast<std::size_t>(alignment);
+    }
+
     void Context::begin(){
         if(state_->recording){
             throw std::runtime_error("Context is already recording commands.");
@@ -763,17 +771,18 @@ namespace socl{
             snapshot = detail::createDescriptorSnapshot(state_->currentDescriptorSet);
 
             for(const auto& bound : snapshot->buffers){
-                auto* existing = detail::findBufferUse(dispatchBuffers, bound.buffer);
-                if(!existing){
-                    dispatchBuffers.push_back({bound.buffer, bound.access});
-                }else{
-                    existing->access = detail::mergeAccess(existing->access, bound.access);
-                }
+                dispatchBuffers.push_back({
+                    bound.buffer,
+                    bound.offset,
+                    bound.size,
+                    bound.access,
+                });
             }
         }
+        dispatchBuffers = detail::normalizeBufferUses(dispatchBuffers);
 
         for(const auto& use : dispatchBuffers){
-            detail::claimBuffer(*recordingResources_, use.buffer, use.access);
+            detail::trackBuffer(*recordingResources_, use.buffer);
         }
 
         if(std::find(recordingResources_->pipelines.begin(),
@@ -787,25 +796,32 @@ namespace socl{
 
         std::vector<vk::BufferMemoryBarrier> barriers;
         barriers.reserve(dispatchBuffers.size());
+        // trackBuffer() seeds this batch with the last successfully submitted access
+        // to every range. Later dispatches then replace only the ranges they touch.
         for(const auto& current : dispatchBuffers){
-            const auto* previous = detail::findBufferUse(
-                recordingResources_->lastBufferAccesses, current.buffer);
-            if(!previous ||
-               (!detail::accessWrites(previous->access) &&
-                !detail::accessWrites(current.access))){
-                continue;
-            }
+            for(const auto& previous : recordingResources_->lastBufferAccesses){
+                if(!detail::rangesOverlap(previous, current) ||
+                   (!detail::accessWrites(previous.access) &&
+                    !detail::accessWrites(current.access))){
+                    continue;
+                }
 
-            vk::BufferMemoryBarrier barrier;
-            barrier
-                .setSrcAccessMask(detail::toVulkanAccess(previous->access))
-                .setDstAccessMask(detail::toVulkanAccess(current.access))
-                .setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-                .setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-                .setBuffer(current.buffer->buffer)
-                .setOffset(0)
-                .setSize(current.buffer->size);
-            barriers.push_back(barrier);
+                const vk::DeviceSize overlapOffset =
+                    std::max(previous.offset, current.offset);
+                const vk::DeviceSize overlapEnd = std::min(
+                    previous.offset + previous.size,
+                    current.offset + current.size);
+                vk::BufferMemoryBarrier barrier;
+                barrier
+                    .setSrcAccessMask(detail::toVulkanAccess(previous.access))
+                    .setDstAccessMask(detail::toVulkanAccess(current.access))
+                    .setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .setBuffer(current.buffer->buffer)
+                    .setOffset(overlapOffset)
+                    .setSize(overlapEnd - overlapOffset);
+                barriers.push_back(barrier);
+            }
         }
         if(!barriers.empty()){
             state_->recordingCommandBuffer.pipelineBarrier(
@@ -826,22 +842,14 @@ namespace socl{
                 {});
         }
         state_->recordingCommandBuffer.dispatch(groupCountX, groupCountY, groupCountZ);
-
-        for(const auto& current : dispatchBuffers){
-            auto* previous = detail::findBufferUse(
-                recordingResources_->lastBufferAccesses, current.buffer);
-            if(!previous){
-                recordingResources_->lastBufferAccesses.push_back(current);
-            }else{
-                previous->access = current.access;
-            }
-        }
+        detail::recordBufferAccesses(*recordingResources_, dispatchBuffers);
     }
 
     DispatchToken Context::submitAsync(){
         if(!state_->recording){
             throw std::runtime_error("No command buffer is currently recording.");
         }
+        auto accessCommits = detail::prepareBufferAccessCommits(*recordingResources_);
         if(recordingResources_ && recordingResources_->gpuTiming){
             state_->recordingCommandBuffer.writeTimestamp2(
                 vk::PipelineStageFlagBits2::eBottomOfPipe,
@@ -857,7 +865,15 @@ namespace socl{
             .setPCommandBuffers(&state_->recordingCommandBuffer);
 
         const vk::CommandBuffer submitted = state_->recordingCommandBuffer;
-        state_->queue.submit(submitInfo, fence);
+        detail::activateBufferClaims(*recordingResources_);
+        try{
+            state_->queue.submit(submitInfo, fence);
+        }catch(...){
+            detail::releaseBufferClaims(*recordingResources_);
+            state_->device.destroyFence(fence);
+            throw;
+        }
+        detail::commitBufferAccesses(std::move(accessCommits));
 
         state_->recordingCommandBuffer = nullptr;
         state_->recording = false;

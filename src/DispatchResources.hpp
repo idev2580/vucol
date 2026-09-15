@@ -28,15 +28,23 @@ namespace socl::detail{
 
     struct DispatchBufferUse{
         std::shared_ptr<BufferState> buffer;
+        vk::DeviceSize offset = 0;
+        vk::DeviceSize size = 0;
         BufferAccess access = BufferAccess::ReadWrite;
+    };
+
+    struct BufferAccessCommit{
+        std::shared_ptr<BufferState> buffer;
+        std::vector<BufferAccessRange> accesses;
     };
 
     struct DispatchResources{
         std::vector<std::shared_ptr<DescriptorSetSnapshotState>> descriptorSets;
         std::vector<std::shared_ptr<ShaderPipelineState>> pipelines;
-        std::vector<DispatchBufferUse> buffers;
+        std::vector<std::shared_ptr<BufferState>> buffers;
         std::vector<DispatchBufferUse> lastBufferAccesses;
         std::shared_ptr<GpuTimingState> gpuTiming;
+        bool bufferClaimsActive = false;
 
         ~DispatchResources();
     };
@@ -49,16 +57,19 @@ namespace socl::detail{
                                                std::uint64_t end,
                                                std::uint32_t validBits);
 
-    DispatchBufferUse* findBufferUse(
-        std::vector<DispatchBufferUse>& uses,
-        const std::shared_ptr<BufferState>& buffer);
-    const DispatchBufferUse* findBufferUse(
-        const std::vector<DispatchBufferUse>& uses,
-        const std::shared_ptr<BufferState>& buffer);
-
-    void claimBuffer(DispatchResources& resources,
-                     const std::shared_ptr<BufferState>& buffer,
-                     BufferAccess access);
+    [[nodiscard]] bool rangesOverlap(const DispatchBufferUse& left,
+                                     const DispatchBufferUse& right);
+    [[nodiscard]] std::vector<DispatchBufferUse> normalizeBufferUses(
+        const std::vector<DispatchBufferUse>& uses);
+    void trackBuffer(DispatchResources& resources,
+                     const std::shared_ptr<BufferState>& buffer);
+    void recordBufferAccesses(DispatchResources& resources,
+                              const std::vector<DispatchBufferUse>& accesses);
+    [[nodiscard]] std::vector<BufferAccessCommit> prepareBufferAccessCommits(
+        const DispatchResources& resources);
+    void commitBufferAccesses(std::vector<BufferAccessCommit> commits);
+    void activateBufferClaims(DispatchResources& resources);
+    void releaseBufferClaims(DispatchResources& resources) noexcept;
 
     [[nodiscard]] std::shared_ptr<DescriptorSetSnapshotState>
     createDescriptorSnapshot(const std::shared_ptr<DescriptorSetState>& source);
