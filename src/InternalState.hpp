@@ -5,11 +5,11 @@
 #include <string>
 #include <vector>
 
-#include <socl/Context.hpp>
+#include <vucol/Context.hpp>
 
 #include <vk_mem_alloc.h>
 
-namespace socl::detail{
+namespace vucol::detail{
     struct BufferState{
         std::shared_ptr<ContextState> context;
         VmaAllocator allocator = VK_NULL_HANDLE;

@@ -5,15 +5,15 @@
 #include <memory>
 #include <iosfwd>
 #include <optional>
-#include <socl/Buffer.hpp>
-#include <socl/DescriptorSet.hpp>
-#include <socl/ShaderPipeline.hpp>
+#include <vucol/Buffer.hpp>
+#include <vucol/DescriptorSet.hpp>
+#include <vucol/ShaderPipeline.hpp>
 #include <string>
 #include <string_view>
 #include <vulkan/vulkan.hpp>
 #include <vector>
 
-namespace socl{
+namespace vucol{
     /** @brief Floating-point GPU duration with nanosecond units. */
     using GpuDuration = std::chrono::duration<double, std::nano>;
 

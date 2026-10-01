@@ -1,0 +1,7 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(Vulkan 1.3)
+
+include("${CMAKE_CURRENT_LIST_DIR}/VUCOLTargets.cmake")
+check_required_components(VUCOL)

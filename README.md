@@ -1,4 +1,4 @@
-# SOCL
+# VUCOL
 A simple open compute library based on Vulkan.
 
 ## Features

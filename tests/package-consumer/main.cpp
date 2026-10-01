@@ -1,6 +1,6 @@
-#include <socl/Buffer.hpp>
+#include <vucol/Buffer.hpp>
 
 int main(){
-    const socl::Buffer buffer;
+    const vucol::Buffer buffer;
     return buffer ? 1 : 0;
 }

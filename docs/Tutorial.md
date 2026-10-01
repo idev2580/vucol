@@ -8,14 +8,14 @@ y[i] = alpha * x[i] + y[i]
 
 It first records one AXPY dispatch, then shows how to record several AXPY
 operations into one command batch. The example keeps the GLSL source in the C++
-program and uses SOCL's shaderc-backed `socl::compileGlslToSpirv()` function, so
+program and uses VUCOL's shaderc-backed `vucol::compileGlslToSpirv()` function, so
 no external shader file or compilation command is required.
 
 ## Complete single-AXPY example
 
 ```cpp
-#include <socl/Context.hpp>
-#include <socl/ShaderCompiler.hpp>
+#include <vucol/Context.hpp>
+#include <vucol/ShaderCompiler.hpp>
 
 #include <chrono>
 #include <cstddef>
@@ -61,14 +61,14 @@ void main() {
 
 int main() {
     // Compile the embedded GLSL compute shader to SPIR-V in this process.
-    const auto spirv = socl::compileGlslToSpirv(axpyShader, "axpy.comp");
+    const auto spirv = vucol::compileGlslToSpirv(axpyShader, "axpy.comp");
 
-    socl::Context context;
+    vucol::Context context;
     auto pipeline = context.createShaderPipeline({
         .spirv = spirv,
         .bindings = {
-            {0, socl::DescriptorType::StorageBuffer},
-            {1, socl::DescriptorType::StorageBuffer},
+            {0, vucol::DescriptorType::StorageBuffer},
+            {1, vucol::DescriptorType::StorageBuffer},
         },
         .pushConstantSize = sizeof(AxpyConstants),
     });
@@ -81,14 +81,14 @@ int main() {
 
     // HostVisible keeps this first example simple. BufferType::Auto is usually a
     // better default for application code and still supports write()/read().
-    auto xBuffer = context.createBuffer(bytes, socl::BufferType::HostVisible);
-    auto yBuffer = context.createBuffer(bytes, socl::BufferType::HostVisible);
+    auto xBuffer = context.createBuffer(bytes, vucol::BufferType::HostVisible);
+    auto yBuffer = context.createBuffer(bytes, vucol::BufferType::HostVisible);
     xBuffer.write(x.data(), bytes);
     yBuffer.write(y.data(), bytes);
 
     auto descriptorSet = context.createDescriptorSet(pipeline);
-    descriptorSet.bindBuffer(0, xBuffer, socl::BufferAccess::Read);
-    descriptorSet.bindBuffer(1, yBuffer, socl::BufferAccess::ReadWrite);
+    descriptorSet.bindBuffer(0, xBuffer, vucol::BufferAccess::Read);
+    descriptorSet.bindBuffer(1, yBuffer, vucol::BufferAccess::ReadWrite);
 
     const AxpyConstants constants{alpha, count};
 
@@ -112,32 +112,32 @@ int main() {
 
 Binding zero is declared `Read` because the shader only reads `x`. Binding one
 is `ReadWrite` because AXPY reads the old value of `y` and writes the result back
-to the same buffer. These access declarations must match the shader; SOCL uses
+to the same buffer. These access declarations must match the shader; VUCOL uses
 them for range dependency tracking and automatic barriers.
 
 The same allocation may also supply several shader bindings. Pass a byte offset
 and size before the access mode:
 
 ```cpp
-const auto alignment = context.bufferOffsetAlignment(socl::DescriptorType::StorageBuffer);
+const auto alignment = context.bufferOffsetAlignment(vucol::DescriptorType::StorageBuffer);
 const auto stride = (valueSize + alignment - 1) / alignment * alignment;
-descriptorSet.bindBuffer(0, workspace, 0, valueSize, socl::BufferAccess::Read);
-descriptorSet.bindBuffer(1, workspace, stride, valueSize, socl::BufferAccess::Write);
-descriptorSet.bindBuffer(2, workspace, stride * 2, valueSize, socl::BufferAccess::Read);
+descriptorSet.bindBuffer(0, workspace, 0, valueSize, vucol::BufferAccess::Read);
+descriptorSet.bindBuffer(1, workspace, stride, valueSize, vucol::BufferAccess::Write);
+descriptorSet.bindBuffer(2, workspace, stride * 2, valueSize, vucol::BufferAccess::Read);
 ```
 
 Offsets must satisfy the selected GPU's descriptor alignment requirements.
-SOCL snapshots the exact ranges and inserts barriers only where ranges overlap
+VUCOL snapshots the exact ranges and inserts barriers only where ranges overlap
 and at least one access writes.
 
 `begin()` starts one command batch. `use()`, `bind()`, `push()`, and `dispatch()`
 record commands into that batch. `submitAsync()` closes and submits it, and the
-returned `socl::DispatchToken` retains all resources until completion. See
+returned `vucol::DispatchToken` retains all resources until completion. See
 @ref dispatch_snapshots for the complete recording and lifetime model.
 
 ## Measuring GPU execution time
 
-`socl::Context` automatically queries and enables Vulkan 1.3
+`vucol::Context` automatically queries and enables Vulkan 1.3
 `synchronization2` during device creation when the selected GPU supports it.
 The application does not need to request a timing extension or enable a feature
 manually. Check `supportsGpuTiming()` before starting a timed batch because the
@@ -155,7 +155,7 @@ context.push(constants);
 context.dispatch((count + workgroupSize - 1) / workgroupSize);
 
 auto token = context.submitAsync();
-const socl::GpuDuration gpuDuration = token.waitAndGetGpuDuration();
+const vucol::GpuDuration gpuDuration = token.waitAndGetGpuDuration();
 std::cout << "GPU batch: "
           << std::chrono::duration<double, std::micro>(gpuDuration).count()
           << " us\n";
@@ -182,8 +182,8 @@ buffers:
 
 ```cpp
 struct AxpyJob {
-    socl::Buffer x;
-    socl::Buffer y;
+    vucol::Buffer x;
+    vucol::Buffer y;
     float alpha;
     std::uint32_t count;
 };
@@ -195,8 +195,8 @@ context.begin();
 context.use(pipeline);
 
 for (const AxpyJob& job : jobs) {
-    descriptorSet.bindBuffer(0, job.x, socl::BufferAccess::Read);
-    descriptorSet.bindBuffer(1, job.y, socl::BufferAccess::ReadWrite);
+    descriptorSet.bindBuffer(0, job.x, vucol::BufferAccess::Read);
+    descriptorSet.bindBuffer(1, job.y, vucol::BufferAccess::ReadWrite);
     context.bind(descriptorSet);
 
     const AxpyConstants constants{job.alpha, job.count};
@@ -213,13 +213,13 @@ push-constant value and workgroup count is also recorded in command order, so
 each AXPY uses its own buffers, `alpha`, and `count`.
 
 The loop records several commands into one command buffer; it does not call
-`submitAsync()` once per job. SOCL submits the recorded sequence once and the GPU
+`submitAsync()` once per job. VUCOL submits the recorded sequence once and the GPU
 processes it in command order. This batching model does not promise that the
 AXPY operations execute concurrently. It removes intermediate CPU submissions
 and lets the Vulkan implementation schedule independent work when legal.
 
 If jobs use different buffers, no buffer dependency is required between them.
-If jobs share a buffer and at least one use writes it, SOCL records a
+If jobs share a buffer and at least one use writes it, VUCOL records a
 compute-to-compute barrier based on the declared `BufferAccess` modes. For
 example, two jobs may update the same `y` sequentially in one batch; the second
 dispatch observes the first dispatch's write when both uses are correctly
@@ -233,7 +233,7 @@ call `submitAsync()` again. A completed command buffer cannot be resubmitted by
 calling `submitAsync()` a second time without a new recording.
 
 Several batches may nevertheless be submitted without waiting between them.
-They execute on the Context's queue, and SOCL carries range access state across
+They execute on the Context's queue, and VUCOL carries range access state across
 submission boundaries so a later batch receives the required RAW, WAR, or WAW
 barrier. Retain each returned token and collect all submissions that reference a
 buffer before accessing that buffer from the CPU.

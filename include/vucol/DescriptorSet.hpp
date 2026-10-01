@@ -3,15 +3,15 @@
 #include <cstdint>
 #include <memory>
 #include <vector>
-#include <socl/Buffer.hpp>
-#include <socl/ShaderPipeline.hpp>
+#include <vucol/Buffer.hpp>
+#include <vucol/ShaderPipeline.hpp>
 #include <vulkan/vulkan.hpp>
 
-namespace socl{
+namespace vucol{
     /**
      * @brief Declares how a dispatch accesses a bound buffer.
      *
-     * SOCL uses this declaration to insert dependencies between dispatches and
+     * VUCOL uses this declaration to insert dependencies between dispatches and
      * submissions. Supplying a weaker mode than the shader's actual access is invalid
      * and can defeat those safeguards.
      */

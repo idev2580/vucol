@@ -1,5 +1,5 @@
-#include <socl/Buffer.hpp>
-#include <socl/Context.hpp>
+#include <vucol/Buffer.hpp>
+#include <vucol/Context.hpp>
 
 #include "InternalState.hpp"
 
@@ -29,7 +29,7 @@ namespace{
         }
     };
 
-    StagingBuffer createStagingBuffer(const socl::detail::ContextState& context,
+    StagingBuffer createStagingBuffer(const vucol::detail::ContextState& context,
                                       vk::DeviceSize bytes){
         StagingBuffer staging;
         staging.allocator = context.allocator;
@@ -71,7 +71,7 @@ namespace{
         return mapped;
     }
 
-    void submitCopyAndWait(const std::shared_ptr<socl::detail::ContextState>& context,
+    void submitCopyAndWait(const std::shared_ptr<vucol::detail::ContextState>& context,
                            vk::Buffer src,
                            vk::Buffer dst,
                            vk::DeviceSize bytes,
@@ -159,7 +159,7 @@ namespace{
     }
 }
 
-namespace socl{
+namespace vucol{
     namespace detail{
         BufferState::~BufferState(){
             if(allocator != VK_NULL_HANDLE && buffer){
@@ -193,7 +193,7 @@ namespace socl{
 
     void Buffer::write(const void* data, std::size_t bytes, std::size_t offset){
         if(!state_){
-            throw std::runtime_error("Cannot write to an empty socl::Buffer.");
+            throw std::runtime_error("Cannot write to an empty vucol::Buffer.");
         }
         if(offset > size() || bytes > size() - offset){
             throw std::out_of_range("Buffer write range is out of bounds.");
@@ -238,7 +238,7 @@ namespace socl{
 
     void Buffer::read(void* data, std::size_t bytes, std::size_t offset) const{
         if(!state_){
-            throw std::runtime_error("Cannot read from an empty socl::Buffer.");
+            throw std::runtime_error("Cannot read from an empty vucol::Buffer.");
         }
         if(offset > size() || bytes > size() - offset){
             throw std::out_of_range("Buffer read range is out of bounds.");

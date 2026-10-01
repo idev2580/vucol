@@ -4,9 +4,9 @@
 #include <memory>
 #include <vector>
 
-#include <socl/DescriptorSet.hpp>
+#include <vucol/DescriptorSet.hpp>
 
-namespace socl::detail{
+namespace vucol::detail{
     struct GpuTimingState{
         vk::Device device;
         vk::QueryPool queryPool;

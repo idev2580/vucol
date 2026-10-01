@@ -11,18 +11,18 @@
 #include <vector>
 
 namespace{
-    vk::DescriptorType toVulkanDescriptorType(socl::DescriptorType type){
+    vk::DescriptorType toVulkanDescriptorType(vucol::DescriptorType type){
         switch(type){
-            case socl::DescriptorType::UniformBuffer:
+            case vucol::DescriptorType::UniformBuffer:
                 return vk::DescriptorType::eUniformBuffer;
-            case socl::DescriptorType::UnifiedPreferred:
-            case socl::DescriptorType::StorageBuffer:
+            case vucol::DescriptorType::UnifiedPreferred:
+            case vucol::DescriptorType::StorageBuffer:
                 return vk::DescriptorType::eStorageBuffer;
         }
         return vk::DescriptorType::eStorageBuffer;
     }
 
-    vk::DeviceSize rangeEnd(const socl::detail::DispatchBufferUse& use){
+    vk::DeviceSize rangeEnd(const vucol::detail::DispatchBufferUse& use){
         if(use.size > std::numeric_limits<vk::DeviceSize>::max() - use.offset){
             throw std::out_of_range("Buffer access range end is not representable.");
         }
@@ -30,7 +30,7 @@ namespace{
     }
 }
 
-namespace socl::detail{
+namespace vucol::detail{
     GpuTimingState::~GpuTimingState(){
         if(device && queryPool){
             device.destroyQueryPool(queryPool);

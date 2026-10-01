@@ -1,8 +1,8 @@
-#include <socl/ShaderPipeline.hpp>
+#include <vucol/ShaderPipeline.hpp>
 
 #include <utility>
 
-namespace socl{
+namespace vucol{
     namespace detail{
         ShaderPipelineState::~ShaderPipelineState(){
             if(device){

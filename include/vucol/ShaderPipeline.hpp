@@ -10,14 +10,14 @@
 #include <vector>
 #include <vulkan/vulkan.hpp>
 
-namespace socl{
+namespace vucol{
     /**
      * @brief Selects how a shader interprets a descriptor binding.
      *
      * This is independent of BufferType, which controls memory allocation.
      */
     enum class DescriptorType{
-        UnifiedPreferred, ///< Use SOCL's preferred general-purpose buffer descriptor.
+        UnifiedPreferred, ///< Use VUCOL's preferred general-purpose buffer descriptor.
         StorageBuffer,    ///< Expose the resource as a Vulkan storage buffer.
         UniformBuffer,    ///< Expose the resource as a Vulkan uniform buffer.
     };

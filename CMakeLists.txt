@@ -1,32 +1,32 @@
 cmake_minimum_required(VERSION 3.23)
-project(socl VERSION 0.0.10 LANGUAGES CXX)
+project(vucol VERSION 0.0.10 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 
 if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
-    set(SOCL_IS_TOP_LEVEL ON)
+    set(VUCOL_IS_TOP_LEVEL ON)
 else()
-    set(SOCL_IS_TOP_LEVEL OFF)
+    set(VUCOL_IS_TOP_LEVEL OFF)
 endif()
 
-option(SOCL_BUILD_TESTS "Build SOCL tests" ${SOCL_IS_TOP_LEVEL})
-option(SOCL_BUILD_EXAMPLES "Build SOCL examples" ${SOCL_IS_TOP_LEVEL})
-option(SOCL_BUILD_DOCS "Build SOCL API documentation with Doxygen" ${SOCL_IS_TOP_LEVEL})
-option(SOCL_DOCS_ONLY "Configure only the SOCL API documentation target" OFF)
+option(VUCOL_BUILD_TESTS "Build VUCOL tests" ${VUCOL_IS_TOP_LEVEL})
+option(VUCOL_BUILD_EXAMPLES "Build VUCOL examples" ${VUCOL_IS_TOP_LEVEL})
+option(VUCOL_BUILD_DOCS "Build VUCOL API documentation with Doxygen" ${VUCOL_IS_TOP_LEVEL})
+option(VUCOL_DOCS_ONLY "Configure only the VUCOL API documentation target" OFF)
 
-if(SOCL_DOCS_ONLY)
-    set(SOCL_BUILD_DOCS ON)
+if(VUCOL_DOCS_ONLY)
+    set(VUCOL_BUILD_DOCS ON)
 endif()
 
-if(SOCL_BUILD_DOCS)
+if(VUCOL_BUILD_DOCS)
     find_package(Doxygen REQUIRED)
 
-    set(DOXYGEN_PROJECT_NAME "SOCL")
+    set(DOXYGEN_PROJECT_NAME "VUCOL")
     set(DOXYGEN_PROJECT_BRIEF "Simple Open Compute Library based on Vulkan")
     set(DOXYGEN_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/docs")
     set(DOXYGEN_EXTRACT_ALL NO)
     set(DOXYGEN_EXTRACT_PRIVATE NO)
-    set(DOXYGEN_EXCLUDE_SYMBOLS "socl::detail::*")
+    set(DOXYGEN_EXCLUDE_SYMBOLS "vucol::detail::*")
     set(DOXYGEN_WARN_IF_UNDOCUMENTED YES)
     set(DOXYGEN_WARN_IF_DOC_ERROR YES)
     set(DOXYGEN_WARN_NO_PARAMDOC YES)
@@ -34,18 +34,18 @@ if(SOCL_BUILD_DOCS)
     set(DOXYGEN_GENERATE_HTML YES)
     set(DOXYGEN_GENERATE_LATEX NO)
 
-    doxygen_add_docs(socl_docs
-        "${PROJECT_SOURCE_DIR}/include/socl"
+    doxygen_add_docs(vucol_docs
+        "${PROJECT_SOURCE_DIR}/include/vucol"
         "${PROJECT_SOURCE_DIR}/docs"
-        COMMENT "Generate SOCL public API documentation"
+        COMMENT "Generate VUCOL public API documentation"
     )
 endif()
 
-if(SOCL_DOCS_ONLY)
+if(VUCOL_DOCS_ONLY)
     return()
 endif()
 
-if(SOCL_IS_TOP_LEVEL)
+if(VUCOL_IS_TOP_LEVEL)
     set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 endif()
 
@@ -65,21 +65,21 @@ else()
 endif()
 
 if(TARGET shaderc::shaderc)
-    set(SOCL_SHADERC_TARGET shaderc::shaderc)
+    set(VUCOL_SHADERC_TARGET shaderc::shaderc)
 elseif(TARGET shaderc::shaderc_shared)
-    set(SOCL_SHADERC_TARGET shaderc::shaderc_shared)
+    set(VUCOL_SHADERC_TARGET shaderc::shaderc_shared)
 elseif(TARGET shaderc_shared)
-    set(SOCL_SHADERC_TARGET shaderc_shared)
+    set(VUCOL_SHADERC_TARGET shaderc_shared)
 elseif(TARGET shaderc)
-    set(SOCL_SHADERC_TARGET shaderc)
+    set(VUCOL_SHADERC_TARGET shaderc)
 elseif(NOT WIN32)
     find_package(PkgConfig QUIET)
     if(PkgConfig_FOUND)
-        pkg_check_modules(SOCL_SHADERC_PC QUIET IMPORTED_TARGET shaderc)
+        pkg_check_modules(VUCOL_SHADERC_PC QUIET IMPORTED_TARGET shaderc)
     endif()
 
-    if(TARGET PkgConfig::SOCL_SHADERC_PC)
-        set(SOCL_SHADERC_TARGET PkgConfig::SOCL_SHADERC_PC)
+    if(TARGET PkgConfig::VUCOL_SHADERC_PC)
+        set(VUCOL_SHADERC_TARGET PkgConfig::VUCOL_SHADERC_PC)
     else()
         message(FATAL_ERROR
             "shaderc was not found. Install a shaderc package that provides a supported "
@@ -88,26 +88,26 @@ elseif(NOT WIN32)
         )
     endif()
 elseif(WIN32 AND DEFINED ENV{VULKAN_SDK})
-    find_path(SOCL_SHADERC_INCLUDE_DIR
+    find_path(VUCOL_SHADERC_INCLUDE_DIR
         NAMES shaderc/shaderc.hpp
         HINTS "$ENV{VULKAN_SDK}"
         PATH_SUFFIXES Include include
         NO_DEFAULT_PATH
     )
-    find_library(SOCL_SHADERC_LIBRARY_RELEASE
+    find_library(VUCOL_SHADERC_LIBRARY_RELEASE
         NAMES shaderc_combined shaderc
         HINTS "$ENV{VULKAN_SDK}"
         PATH_SUFFIXES Lib lib
         NO_DEFAULT_PATH
     )
-    find_library(SOCL_SHADERC_LIBRARY_DEBUG
+    find_library(VUCOL_SHADERC_LIBRARY_DEBUG
         NAMES shaderc_combinedd shadercd
         HINTS "$ENV{VULKAN_SDK}"
         PATH_SUFFIXES Lib lib
         NO_DEFAULT_PATH
     )
 
-    if(NOT SOCL_SHADERC_INCLUDE_DIR OR NOT SOCL_SHADERC_LIBRARY_RELEASE)
+    if(NOT VUCOL_SHADERC_INCLUDE_DIR OR NOT VUCOL_SHADERC_LIBRARY_RELEASE)
         message(FATAL_ERROR
             "shaderc was not found in VULKAN_SDK ($ENV{VULKAN_SDK}). Expected "
             "shaderc/shaderc.hpp under Include and shaderc_combined.lib or shaderc.lib "
@@ -115,23 +115,23 @@ elseif(WIN32 AND DEFINED ENV{VULKAN_SDK})
         )
     endif()
 
-    add_library(socl_shaderc_sdk UNKNOWN IMPORTED)
-    set_target_properties(socl_shaderc_sdk PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES "${SOCL_SHADERC_INCLUDE_DIR}"
-        IMPORTED_LOCATION "${SOCL_SHADERC_LIBRARY_RELEASE}"
+    add_library(vucol_shaderc_sdk UNKNOWN IMPORTED)
+    set_target_properties(vucol_shaderc_sdk PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${VUCOL_SHADERC_INCLUDE_DIR}"
+        IMPORTED_LOCATION "${VUCOL_SHADERC_LIBRARY_RELEASE}"
     )
 
-    if(SOCL_SHADERC_LIBRARY_DEBUG)
-        set_target_properties(socl_shaderc_sdk PROPERTIES
-            IMPORTED_LOCATION_DEBUG "${SOCL_SHADERC_LIBRARY_DEBUG}"
+    if(VUCOL_SHADERC_LIBRARY_DEBUG)
+        set_target_properties(vucol_shaderc_sdk PROPERTIES
+            IMPORTED_LOCATION_DEBUG "${VUCOL_SHADERC_LIBRARY_DEBUG}"
         )
     else()
-        set_target_properties(socl_shaderc_sdk PROPERTIES
-            IMPORTED_LOCATION_DEBUG "${SOCL_SHADERC_LIBRARY_RELEASE}"
+        set_target_properties(vucol_shaderc_sdk PROPERTIES
+            IMPORTED_LOCATION_DEBUG "${VUCOL_SHADERC_LIBRARY_RELEASE}"
         )
     endif()
 
-    set(SOCL_SHADERC_TARGET socl_shaderc_sdk)
+    set(VUCOL_SHADERC_TARGET vucol_shaderc_sdk)
 else()
     message(FATAL_ERROR
         "shaderc was not found. Install a shaderc package that provides a supported "
@@ -164,77 +164,77 @@ endif()
 
 add_subdirectory(src)
 
-add_library(socl SHARED ${SOURCES})
-add_library(SOCL::socl ALIAS socl)
-set_target_properties(socl PROPERTIES
+add_library(vucol SHARED ${SOURCES})
+add_library(VUCOL::vucol ALIAS vucol)
+set_target_properties(vucol PROPERTIES
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}
     WINDOWS_EXPORT_ALL_SYMBOLS ON
 )
-target_compile_features(socl PUBLIC cxx_std_20)
-target_include_directories(socl
+target_compile_features(vucol PUBLIC cxx_std_20)
+target_include_directories(vucol
     PUBLIC
         "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
         "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
-target_link_libraries(socl
+target_link_libraries(vucol
     PUBLIC
         Vulkan::Vulkan
     PRIVATE
         vk-bootstrap::vk-bootstrap
         GPUOpen::VulkanMemoryAllocator
-        ${SOCL_SHADERC_TARGET}
+        ${VUCOL_SHADERC_TARGET}
 )
 
-set(SOCL_INSTALL_CMAKEDIR "${CMAKE_INSTALL_LIBDIR}/cmake/SOCL")
+set(VUCOL_INSTALL_CMAKEDIR "${CMAKE_INSTALL_LIBDIR}/cmake/VUCOL")
 
-install(TARGETS socl
-    EXPORT SOCLTargets
+install(TARGETS vucol
+    EXPORT VUCOLTargets
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
     LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
     ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
 )
 
-install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/socl"
+install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/vucol"
     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
     FILES_MATCHING PATTERN "*.hpp"
 )
 
-install(EXPORT SOCLTargets
-    FILE SOCLTargets.cmake
-    NAMESPACE SOCL::
-    DESTINATION "${SOCL_INSTALL_CMAKEDIR}"
+install(EXPORT VUCOLTargets
+    FILE VUCOLTargets.cmake
+    NAMESPACE VUCOL::
+    DESTINATION "${VUCOL_INSTALL_CMAKEDIR}"
 )
 
 include(CMakePackageConfigHelpers)
 configure_package_config_file(
-    "${PROJECT_SOURCE_DIR}/cmake/SOCLConfig.cmake.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/SOCLConfig.cmake"
-    INSTALL_DESTINATION "${SOCL_INSTALL_CMAKEDIR}"
+    "${PROJECT_SOURCE_DIR}/cmake/VUCOLConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/VUCOLConfig.cmake"
+    INSTALL_DESTINATION "${VUCOL_INSTALL_CMAKEDIR}"
 )
 write_basic_package_version_file(
-    "${CMAKE_CURRENT_BINARY_DIR}/SOCLConfigVersion.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/VUCOLConfigVersion.cmake"
     VERSION "${PROJECT_VERSION}"
     COMPATIBILITY SameMinorVersion
 )
 
 install(FILES
-    "${CMAKE_CURRENT_BINARY_DIR}/SOCLConfig.cmake"
-    "${CMAKE_CURRENT_BINARY_DIR}/SOCLConfigVersion.cmake"
-    DESTINATION "${SOCL_INSTALL_CMAKEDIR}"
+    "${CMAKE_CURRENT_BINARY_DIR}/VUCOLConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/VUCOLConfigVersion.cmake"
+    DESTINATION "${VUCOL_INSTALL_CMAKEDIR}"
 )
 
-if(SOCL_BUILD_EXAMPLES)
+if(VUCOL_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 
-if(SOCL_BUILD_TESTS)
+if(VUCOL_BUILD_TESTS)
     if(MSVC)
         set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
     endif()
     enable_testing()
 
-    set(INSTALL_GTEST OFF CACHE BOOL "Do not install SOCL's GoogleTest dependency" FORCE)
+    set(INSTALL_GTEST OFF CACHE BOOL "Do not install VUCOL's GoogleTest dependency" FORCE)
     FetchContent_Declare(
       googletest
       GIT_REPOSITORY https://github.com/google/googletest.git
@@ -244,8 +244,8 @@ if(SOCL_BUILD_TESTS)
 
     add_subdirectory(tests)
 
-    add_executable(socl_tests ${TEST_SOURCES})
-    target_link_libraries(socl_tests PRIVATE socl GTest::gtest_main)
+    add_executable(vucol_tests ${TEST_SOURCES})
+    target_link_libraries(vucol_tests PRIVATE vucol GTest::gtest_main)
     include(GoogleTest)
-    gtest_discover_tests(socl_tests)
+    gtest_discover_tests(vucol_tests)
 endif()

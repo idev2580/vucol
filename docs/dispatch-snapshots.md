@@ -1,8 +1,8 @@
 # Dispatch Snapshots and Batched Submission {#dispatch_snapshots}
 
-SOCL records a complete sequence of compute commands between
-`socl::Context::begin()` and `socl::Context::submitAsync()`. Each call to
-`socl::Context::dispatch()` freezes the descriptor bindings needed by that
+VUCOL records a complete sequence of compute commands between
+`vucol::Context::begin()` and `vucol::Context::submitAsync()`. Each call to
+`vucol::Context::dispatch()` freezes the descriptor bindings needed by that
 dispatch. A later pipeline selection or descriptor rebinding therefore does not
 change a dispatch that has already been recorded.
 
@@ -12,13 +12,13 @@ For a complete working example, see @ref tutorial_axpy.
 
 The following state is preserved for every recorded dispatch:
 
-- **Descriptor bindings.** SOCL copies the current logical `socl::DescriptorSet`
+- **Descriptor bindings.** VUCOL copies the current logical `vucol::DescriptorSet`
   bindings into a newly allocated native Vulkan descriptor set. The snapshot
   contains the bound buffers, their ranges, descriptor types, binding numbers,
-  and declared `socl::BufferAccess` modes. Rebinding the logical descriptor set
+  and declared `vucol::BufferAccess` modes. Rebinding the logical descriptor set
   afterward does not modify this native snapshot. A pipeline with no descriptor
   bindings needs no descriptor snapshot.
-- **Shader pipeline.** `socl::Context::use()` records a Vulkan pipeline-bind
+- **Shader pipeline.** `vucol::Context::use()` records a Vulkan pipeline-bind
   command immediately. Each dispatch retains the selected pipeline state until
   its batch completes. The pipeline object is not cloned; the recorded bind
   command and retained immutable pipeline state preserve the selection.
@@ -28,16 +28,16 @@ The following state is preserved for every recorded dispatch:
 - **Workgroup counts.** The `groupCountX`, `groupCountY`, and `groupCountZ`
   arguments are encoded directly into the recorded dispatch command.
 - **Buffer lifetime and access metadata.** Captured buffers are retained until
-  the batch completes. SOCL preserves each binding's byte offset, byte size, and
+  the batch completes. VUCOL preserves each binding's byte offset, byte size, and
   access mode. It records compute-to-compute buffer barriers for overlapping
   ranges when either access writes.
 
-Push constants require one distinction: `socl::Context::push()` copies its bytes
+Push constants require one distinction: `vucol::Context::push()` copies its bytes
 directly into a Vulkan push-constant command when `push()` is called. They are
 therefore preserved in command order, but they are not stored inside the native
 descriptor snapshot. Push-constant state remains in effect until another push
 command for the applicable range changes it. After selecting another pipeline,
-push the values required by that pipeline explicitly; SOCL does not create a
+push the values required by that pipeline explicitly; VUCOL does not create a
 separate implicit push-constant snapshot at `dispatch()`.
 
 `submitAsync()` does not rebuild snapshots or revisit the current C++ objects.
@@ -83,7 +83,7 @@ dispatch and use it for a later dispatch:
 context.bind(set);
 context.dispatch(firstGroups);       // captures the current bindings
 
-set.bindBuffer(0, anotherBuffer, socl::BufferAccess::Read);
+set.bindBuffer(0, anotherBuffer, vucol::BufferAccess::Read);
 context.bind(set);
 context.dispatch(secondGroups);      // captures the new bindings
 ```
@@ -101,11 +101,11 @@ The whole-buffer `bindBuffer()` overload remains available. A second overload
 binds one byte range of the same allocation:
 
 ```cpp
-const auto alignment = context.bufferOffsetAlignment(socl::DescriptorType::StorageBuffer);
+const auto alignment = context.bufferOffsetAlignment(vucol::DescriptorType::StorageBuffer);
 const auto stride = (valueSize + alignment - 1) / alignment * alignment;
-set.bindBuffer(0, storage, 0, valueSize, socl::BufferAccess::Read);
-set.bindBuffer(1, storage, stride, valueSize, socl::BufferAccess::Write);
-set.bindBuffer(2, storage, stride * 2, valueSize, socl::BufferAccess::Read);
+set.bindBuffer(0, storage, 0, valueSize, vucol::BufferAccess::Read);
+set.bindBuffer(1, storage, stride, valueSize, vucol::BufferAccess::Write);
+set.bindBuffer(2, storage, stride * 2, valueSize, vucol::BufferAccess::Read);
 ```
 
 Each dispatch snapshot retains these offsets and sizes. The shader sees offset
@@ -114,7 +114,7 @@ out-of-bounds ranges, offsets that violate the device's storage/uniform buffer
 alignment, and ranges larger than the corresponding descriptor limit. Use
 `Context::bufferOffsetAlignment()` when laying out adjacent ranges.
 
-GPU dependency tracking is range based. SOCL emits no barrier for disjoint
+GPU dependency tracking is range based. VUCOL emits no barrier for disjoint
 ranges or read-after-read. RAW, WAR, and WAW dependencies over intersecting
 ranges receive a barrier covering their intersection. Access state is retained
 independently for untouched portions of a buffer.
@@ -128,19 +128,19 @@ a context and not once per operator. The valid lifecycle is:
 begin -> record one or more operators -> submitAsync
 ```
 
-After `submitAsync()`, that recording is closed. SOCL clears the context's
+After `submitAsync()`, that recording is closed. VUCOL clears the context's
 current pipeline and descriptor-set selection, and the returned
-`socl::DispatchToken` takes ownership of the submitted one-time command buffer.
+`vucol::DispatchToken` takes ownership of the submitted one-time command buffer.
 A later call to `use()`, `bind()`, `push()`, or `dispatch()` therefore requires a
 new `begin()`. Calling `submitAsync()` again without first beginning and
 recording a new batch is also an error.
 
-For a soclBLAS-style execution plan, store the logical operations and their
+For a vucolBLAS-style execution plan, store the logical operations and their
 pipeline, binding, constant, and dispatch parameters in the plan. Replay those
-operations into a fresh SOCL recording each time the plan executes:
+operations into a fresh VUCOL recording each time the plan executes:
 
 ```cpp
-socl::DispatchToken ExecutionPlan::execute(socl::Context& context) const {
+vucol::DispatchToken ExecutionPlan::execute(vucol::Context& context) const {
     context.begin();
 
     for (const auto& operation : operations_) {
@@ -151,7 +151,7 @@ socl::DispatchToken ExecutionPlan::execute(socl::Context& context) const {
 }
 ```
 
-The current SOCL API does not preserve a finished command buffer as a reusable
+The current VUCOL API does not preserve a finished command buffer as a reusable
 execution-plan object. In particular, this is not supported:
 
 ```cpp
@@ -175,14 +175,14 @@ auto token = context.submitAsync();
 ```
 
 Do not put `begin()` and `submitAsync()` inside every operator. Doing so creates
-separate submissions and prevents SOCL from recording the whole operator graph
+separate submissions and prevents VUCOL from recording the whole operator graph
 as one ordered batch with automatic inter-dispatch barriers.
 
 After one asynchronous execution has been submitted, another batch may be begun
 on the same context while the first token is still valid. Both submissions use
 the Context's single queue and may reference the same buffers. The next batch's
 dispatches compare their ranges with the last accesses submitted to that queue,
-so SOCL records the required submission-boundary barriers without a CPU wait.
+so VUCOL records the required submission-boundary barriers without a CPU wait.
 
 ## One batch versus separate submissions
 
@@ -198,19 +198,19 @@ They produce the same computed values when all of the following are true:
 - A and B use the same pipelines, descriptor bindings, push constants,
   workgroup counts, and initial buffer contents in both versions.
 - The shaders are deterministic for those inputs.
-- Every buffer access is declared accurately with `socl::BufferAccess`.
+- Every buffer access is declared accurately with `vucol::BufferAccess`.
 - No host operation, other queue work, or external synchronization changes or
   observes relevant state at the boundary between A and B.
-- The separate submissions use the same SOCL Context and therefore the same
+- The separate submissions use the same VUCOL Context and therefore the same
   Vulkan queue.
 
 The two forms do not have identical synchronization behavior:
 
-- In one batch, SOCL records both dispatches in one command buffer and inserts
+- In one batch, VUCOL records both dispatches in one command buffer and inserts
   the required compute-to-compute buffer barriers from their declared access
   modes. The GPU executes the recorded commands in order after one submission.
 - Separate submissions create separate command buffers, fences, resource
-  trackers, and submission boundaries. SOCL carries the last range access state
+  trackers, and submission boundaries. VUCOL carries the last range access state
   across those boundaries and records dependencies in the later command buffer.
   Waiting between GPU submissions is not required, even when they share buffers.
 - A wait between submissions permits host-side reads, writes, or decisions and
@@ -226,10 +226,10 @@ decide what to submit next.
 
 ## Lifetime
 
-The `socl::DispatchToken` returned by `submitAsync()` owns the submitted command
+The `vucol::DispatchToken` returned by `submitAsync()` owns the submitted command
 buffer and fence and retains all captured descriptor snapshots, pipelines, and
 buffers. It also owns one CPU-access claim for each distinct buffer in the
-submission. `socl::DispatchToken::wait()`, token destruction, or replacement of
+submission. `vucol::DispatchToken::wait()`, token destruction, or replacement of
 a valid token waits for GPU completion before those retained resources and
 claims are released. If several uncollected submissions use one buffer, all of
 their claims must be released before CPU access is allowed.

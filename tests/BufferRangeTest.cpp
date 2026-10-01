@@ -1,7 +1,7 @@
-#include <socl/Context.hpp>
-#include <socl/DescriptorSet.hpp>
-#include <socl/ShaderCompiler.hpp>
-#include <socl/ShaderPipeline.hpp>
+#include <vucol/Context.hpp>
+#include <vucol/DescriptorSet.hpp>
+#include <vucol/ShaderCompiler.hpp>
+#include <vucol/ShaderPipeline.hpp>
 
 #include <algorithm>
 #include <array>
@@ -22,9 +22,9 @@ namespace{
 
 }
 
-TEST(SoclBufferRanges, PreserveOrderAcrossDispatchesAndSubmissions){
+TEST(VucolBufferRanges, PreserveOrderAcrossDispatchesAndSubmissions){
     try{
-        if(socl::Context::enumerateGpus().empty()){
+        if(vucol::Context::enumerateGpus().empty()){
             GTEST_SKIP() << "No Vulkan compute device is available.";
         }
     }catch(const std::runtime_error& error){
@@ -52,20 +52,20 @@ void main(){
 }
 )";
 
-    const auto spirv = socl::compileGlslToSpirv(shaderSource);
-    socl::Context context;
+    const auto spirv = vucol::compileGlslToSpirv(shaderSource);
+    vucol::Context context;
     auto pipeline = context.createShaderPipeline({
         .spirv = spirv,
         .bindings = {
-            {0, socl::DescriptorType::StorageBuffer},
-            {1, socl::DescriptorType::StorageBuffer},
-            {2, socl::DescriptorType::StorageBuffer},
+            {0, vucol::DescriptorType::StorageBuffer},
+            {1, vucol::DescriptorType::StorageBuffer},
+            {2, vucol::DescriptorType::StorageBuffer},
         },
     });
     auto descriptorSet = context.createDescriptorSet(pipeline);
     const std::size_t alignment = std::max<std::size_t>(
         1,
-        context.bufferOffsetAlignment(socl::DescriptorType::StorageBuffer));
+        context.bufferOffsetAlignment(vucol::DescriptorType::StorageBuffer));
     const std::size_t rangeStride =
         ((rangeSize + alignment - 1) / alignment) * alignment;
     const auto rangeOffset = [rangeStride](std::size_t index){
@@ -73,7 +73,7 @@ void main(){
     };
     auto buffer = context.createBuffer(
         rangeOffset(2) + rangeSize,
-        socl::BufferType::HostVisible);
+        vucol::BufferType::HostVisible);
 
     const auto writeValues = [&](const std::array<std::uint32_t, 3>& values){
         for(std::size_t i = 0; i < values.size(); ++i){
@@ -93,19 +93,19 @@ void main(){
             buffer,
             rangeOffset(operation.output),
             rangeSize,
-            socl::BufferAccess::Write);
+            vucol::BufferAccess::Write);
         descriptorSet.bindBuffer(
             1,
             buffer,
             rangeOffset(operation.left),
             rangeSize,
-            socl::BufferAccess::Read);
+            vucol::BufferAccess::Read);
         descriptorSet.bindBuffer(
             2,
             buffer,
             rangeOffset(operation.right),
             rangeSize,
-            socl::BufferAccess::Read);
+            vucol::BufferAccess::Read);
         context.bind(descriptorSet);
         context.dispatch(1);
     };

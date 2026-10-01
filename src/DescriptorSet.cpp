@@ -1,4 +1,4 @@
-#include <socl/DescriptorSet.hpp>
+#include <vucol/DescriptorSet.hpp>
 
 #include "InternalState.hpp"
 
@@ -8,19 +8,19 @@
 #include <vector>
 
 namespace{
-    vk::DescriptorType toVulkanDescriptorType(socl::DescriptorType type){
+    vk::DescriptorType toVulkanDescriptorType(vucol::DescriptorType type){
         switch(type){
-            case socl::DescriptorType::UniformBuffer:
+            case vucol::DescriptorType::UniformBuffer:
                 return vk::DescriptorType::eUniformBuffer;
-            case socl::DescriptorType::UnifiedPreferred:
-            case socl::DescriptorType::StorageBuffer:
+            case vucol::DescriptorType::UnifiedPreferred:
+            case vucol::DescriptorType::StorageBuffer:
                 return vk::DescriptorType::eStorageBuffer;
         }
         return vk::DescriptorType::eStorageBuffer;
     }
 }
 
-namespace socl{
+namespace vucol{
     namespace detail{
         DescriptorSetState::~DescriptorSetState(){
             if(device && descriptorPool){
@@ -48,10 +48,10 @@ namespace socl{
                                    std::size_t size,
                                    BufferAccess access){
         if(!state_ || !state_->pipeline){
-            throw std::runtime_error("Cannot bind a buffer to an empty socl::DescriptorSet.");
+            throw std::runtime_error("Cannot bind a buffer to an empty vucol::DescriptorSet.");
         }
         if(!buffer.state_){
-            throw std::runtime_error("Cannot bind an empty socl::Buffer.");
+            throw std::runtime_error("Cannot bind an empty vucol::Buffer.");
         }
         if(buffer.state_->context != state_->context){
             throw std::runtime_error("Buffer belongs to a different Context.");
@@ -100,7 +100,7 @@ namespace socl{
 
     void DescriptorSet::update(){
         if(!state_ || !state_->pipeline){
-            throw std::runtime_error("Cannot update an empty socl::DescriptorSet.");
+            throw std::runtime_error("Cannot update an empty vucol::DescriptorSet.");
         }
 
         std::vector<vk::DescriptorBufferInfo> bufferInfos;

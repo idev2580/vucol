@@ -1,4 +1,4 @@
-#include <socl/Context.hpp>
+#include <vucol/Context.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -40,7 +40,7 @@ namespace{
 
 int main(int argc, char** argv){
     try{
-        const auto gpus = socl::Context::enumerateGpus();
+        const auto gpus = vucol::Context::enumerateGpus();
         if(gpus.empty()){
             std::cerr << "No Vulkan GPUs found.\n";
             return 1;
@@ -51,7 +51,7 @@ int main(int argc, char** argv){
             gpuIndex = static_cast<std::uint32_t>(std::stoul(argv[1]));
         }
 
-        socl::Context context({.physicalDeviceIndex = gpuIndex});
+        vucol::Context context({.physicalDeviceIndex = gpuIndex});
         context.printGpuInfo(std::cout);
         std::cout << "  VK_KHR_shader_float16_int8: "
                   << (context.supportsDeviceExtension("VK_KHR_shader_float16_int8") ? "supported" : "not supported")
@@ -63,40 +63,40 @@ int main(int argc, char** argv){
         const DispatchParams params{.count = static_cast<std::uint32_t>(inputA.size())};
 
         const std::size_t bytes = inputA.size() * sizeof(float);
-        auto bufferA = context.createBuffer(bytes, socl::BufferType::HostVisible);
-        auto bufferB = context.createBuffer(bytes, socl::BufferType::HostVisible);
-        auto bufferOut = context.createBuffer(bytes, socl::BufferType::HostVisible);
-        auto paramsBuffer = context.createBuffer(sizeof(params), socl::BufferType::HostVisible);
+        auto bufferA = context.createBuffer(bytes, vucol::BufferType::HostVisible);
+        auto bufferB = context.createBuffer(bytes, vucol::BufferType::HostVisible);
+        auto bufferOut = context.createBuffer(bytes, vucol::BufferType::HostVisible);
+        auto paramsBuffer = context.createBuffer(sizeof(params), vucol::BufferType::HostVisible);
 
         bufferA.write(inputA.data(), bytes);
         bufferB.write(inputB.data(), bytes);
         paramsBuffer.write(&params, sizeof(params));
 
-        const auto spirv = loadSpirv(SOCL_ELEMENTWISE_ADD_SPV);
+        const auto spirv = loadSpirv(VUCOL_ELEMENTWISE_ADD_SPV);
         auto pipeline = context.createShaderPipeline({
             .spirv = spirv,
             .bindings = {
-                {0, socl::DescriptorType::StorageBuffer},
-                {1, socl::DescriptorType::StorageBuffer},
-                {2, socl::DescriptorType::StorageBuffer},
-                {3, socl::DescriptorType::UniformBuffer},
+                {0, vucol::DescriptorType::StorageBuffer},
+                {1, vucol::DescriptorType::StorageBuffer},
+                {2, vucol::DescriptorType::StorageBuffer},
+                {3, vucol::DescriptorType::UniformBuffer},
             },
             .pushConstantSize = sizeof(std::uint32_t),
             // These specialization constants are intentionally unused by the shader.
             // They only demonstrate that the API accepts multiple scalar value types.
             .specConstants = {
-                {0, socl::specConstant(std::uint32_t{64})},
-                {1, socl::specConstant(std::int32_t{-1})},
-                {2, socl::specConstant(1.0f)},
-                {3, socl::specConstant(true)},
+                {0, vucol::specConstant(std::uint32_t{64})},
+                {1, vucol::specConstant(std::int32_t{-1})},
+                {2, vucol::specConstant(1.0f)},
+                {3, vucol::specConstant(true)},
             },
         });
 
         auto descriptorSet = context.createDescriptorSet(pipeline);
-        descriptorSet.bindBuffer(0, bufferA, socl::BufferAccess::Read);
-        descriptorSet.bindBuffer(1, bufferB, socl::BufferAccess::Read);
-        descriptorSet.bindBuffer(2, bufferOut, socl::BufferAccess::Write);
-        descriptorSet.bindBuffer(3, paramsBuffer, socl::BufferAccess::Read);
+        descriptorSet.bindBuffer(0, bufferA, vucol::BufferAccess::Read);
+        descriptorSet.bindBuffer(1, bufferB, vucol::BufferAccess::Read);
+        descriptorSet.bindBuffer(2, bufferOut, vucol::BufferAccess::Write);
+        descriptorSet.bindBuffer(3, paramsBuffer, vucol::BufferAccess::Read);
 
         context.begin();
         context.use(pipeline);

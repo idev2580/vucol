@@ -1,7 +1,7 @@
 #define VMA_IMPLEMENTATION
 #include <vk_mem_alloc.h>
 
-#include <socl/Context.hpp>
+#include <vucol/Context.hpp>
 
 #include "DispatchResources.hpp"
 #include "InternalState.hpp"
@@ -33,30 +33,30 @@ namespace{
         return result.value();
     }
 
-    vk::DescriptorType toVulkanDescriptorType(socl::DescriptorType type){
+    vk::DescriptorType toVulkanDescriptorType(vucol::DescriptorType type){
         switch(type){
-            case socl::DescriptorType::UniformBuffer:
+            case vucol::DescriptorType::UniformBuffer:
                 return vk::DescriptorType::eUniformBuffer;
-            case socl::DescriptorType::UnifiedPreferred:
-            case socl::DescriptorType::StorageBuffer:
+            case vucol::DescriptorType::UnifiedPreferred:
+            case vucol::DescriptorType::StorageBuffer:
                 return vk::DescriptorType::eStorageBuffer;
         }
         return vk::DescriptorType::eStorageBuffer;
     }
 
-    VmaMemoryUsage toVmaMemoryUsage(socl::BufferType type){
+    VmaMemoryUsage toVmaMemoryUsage(vucol::BufferType type){
         switch(type){
-            case socl::BufferType::HostVisible:
+            case vucol::BufferType::HostVisible:
                 return VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
-            case socl::BufferType::Auto:
-            case socl::BufferType::DeviceLocal:
+            case vucol::BufferType::Auto:
+            case vucol::BufferType::DeviceLocal:
                 return VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
         }
         return VMA_MEMORY_USAGE_AUTO;
     }
 
-    VmaAllocationCreateFlags toVmaAllocationFlags(socl::BufferType type){
-        if(type == socl::BufferType::HostVisible){
+    VmaAllocationCreateFlags toVmaAllocationFlags(vucol::BufferType type){
+        if(type == vucol::BufferType::HostVisible){
             return VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
                    VMA_ALLOCATION_CREATE_MAPPED_BIT;
         }
@@ -67,8 +67,8 @@ namespace{
         vkb::InstanceBuilder instanceBuilder;
         return unwrap(
             instanceBuilder
-                .set_app_name("socl")
-                .set_engine_name("socl")
+                .set_app_name("vucol")
+                .set_engine_name("vucol")
                 .require_api_version(1, 3, 0)
                 .build(),
             "vk-bootstrap instance creation failed");
@@ -142,11 +142,11 @@ namespace{
         return properties;
     }
 
-    socl::CooperativeMatrixSupportInfo makeCooperativeMatrixSupportInfo(
+    vucol::CooperativeMatrixSupportInfo makeCooperativeMatrixSupportInfo(
         vk::Instance instance,
         vk::PhysicalDevice physicalDevice,
         const std::vector<std::string>& extensionNames){
-        socl::CooperativeMatrixSupportInfo info;
+        vucol::CooperativeMatrixSupportInfo info;
         info.extensionSupported = containsExtension(extensionNames, VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME);
         if(!info.extensionSupported){
             return info;
@@ -193,7 +193,7 @@ namespace{
         return info;
     }
 
-    socl::SubgroupSupportInfo makeSubgroupSupportInfo(
+    vucol::SubgroupSupportInfo makeSubgroupSupportInfo(
         vk::PhysicalDevice physicalDevice,
         bool sizeControlAvailable){
         VkPhysicalDeviceSubgroupSizeControlProperties sizeControlProperties{};
@@ -209,7 +209,7 @@ namespace{
         properties.pNext = &subgroupProperties;
         vkGetPhysicalDeviceProperties2(physicalDevice, &properties);
 
-        socl::SubgroupSupportInfo info;
+        vucol::SubgroupSupportInfo info;
         info.defaultSize = subgroupProperties.subgroupSize;
         info.supportedStages = vk::ShaderStageFlags(subgroupProperties.supportedStages);
         info.supportedOperations =
@@ -236,7 +236,7 @@ namespace{
         return info;
     }
 
-    socl::GpuTimingSupportInfo makeGpuTimingSupportInfo(
+    vucol::GpuTimingSupportInfo makeGpuTimingSupportInfo(
         vk::PhysicalDevice physicalDevice,
         const vk::PhysicalDeviceProperties& physicalDeviceProperties,
         std::uint32_t queueFamily,
@@ -246,7 +246,7 @@ namespace{
         const std::uint32_t validBits = queueFamilies[queueFamily].timestampValidBits;
         const float timestampPeriod = physicalDeviceProperties.limits.timestampPeriod;
 
-        socl::GpuTimingSupportInfo info;
+        vucol::GpuTimingSupportInfo info;
         info.synchronization2Supported = synchronization2Supported;
         info.synchronization2Enabled = synchronization2Enabled;
         info.timestampSupported = validBits != 0 && timestampPeriod > 0.0f;
@@ -277,13 +277,13 @@ namespace{
         return false;
     }
 
-    socl::GpuInfo makeGpuInfo(vk::PhysicalDevice physicalDevice,
+    vucol::GpuInfo makeGpuInfo(vk::PhysicalDevice physicalDevice,
                               std::uint32_t index,
                               std::uint32_t computeQueueFamily){
         const auto properties = physicalDevice.getProperties();
         const auto queueFamilies = physicalDevice.getQueueFamilyProperties();
 
-        socl::GpuInfo info;
+        vucol::GpuInfo info;
         info.index = index;
         info.name = properties.deviceName.data();
         info.type = physicalDeviceTypeName(properties.deviceType);
@@ -314,7 +314,7 @@ namespace{
     }
 }
 
-namespace socl{
+namespace vucol{
     namespace detail{
         ContextState::~ContextState(){
             if(device){
@@ -438,7 +438,7 @@ namespace socl{
 
     Buffer Context::createBuffer(std::size_t bytes, BufferType type){
         if(bytes == 0){
-            throw std::runtime_error("Cannot create a zero-sized socl::Buffer.");
+            throw std::runtime_error("Cannot create a zero-sized vucol::Buffer.");
         }
 
         auto state = std::make_shared<detail::BufferState>();
@@ -927,7 +927,7 @@ namespace socl{
 
     void Context::printGpuInfo(std::ostream& os) const{
         const auto& info = gpuInfo();
-        os << "SOCL GPU " << info.index << '\n'
+        os << "VUCOL GPU " << info.index << '\n'
            << "  Name: " << info.name << '\n'
            << "  Type: " << info.type << '\n'
            << "  Vendor ID: 0x" << std::hex << info.vendorId << std::dec << '\n'

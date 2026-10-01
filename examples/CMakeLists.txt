@@ -10,11 +10,11 @@ add_custom_command(
     VERBATIM
 )
 
-add_executable(socl_elementwise_add
+add_executable(vucol_elementwise_add
     elementwise_add.cpp
     "${ELEMENTWISE_ADD_SPV}"
 )
-target_link_libraries(socl_elementwise_add PRIVATE socl)
-target_compile_definitions(socl_elementwise_add
-    PRIVATE SOCL_ELEMENTWISE_ADD_SPV="${ELEMENTWISE_ADD_SPV}"
+target_link_libraries(vucol_elementwise_add PRIVATE vucol)
+target_compile_definitions(vucol_elementwise_add
+    PRIVATE VUCOL_ELEMENTWISE_ADD_SPV="${ELEMENTWISE_ADD_SPV}"
 )

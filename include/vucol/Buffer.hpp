@@ -4,7 +4,7 @@
 #include <memory>
 #include <vulkan/vulkan.hpp>
 
-namespace socl{
+namespace vucol{
     /**
      * @brief Selects the preferred memory placement of a Buffer.
      *

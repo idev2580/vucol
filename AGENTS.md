@@ -1,4 +1,4 @@
-# SOCL
+# VUCOL
 Simple Open Compute Library based on Vulkan.
 
 ## Main Purpose

@@ -1,7 +1,7 @@
-#include <socl/Context.hpp>
-#include <socl/DescriptorSet.hpp>
-#include <socl/ShaderCompiler.hpp>
-#include <socl/ShaderPipeline.hpp>
+#include <vucol/Context.hpp>
+#include <vucol/DescriptorSet.hpp>
+#include <vucol/ShaderCompiler.hpp>
+#include <vucol/ShaderPipeline.hpp>
 
 #include "../src/DispatchResources.hpp"
 
@@ -13,9 +13,9 @@
 #include <vector>
 #include <gtest/gtest.h>
 
-using namespace socl;
+using namespace vucol;
 
-TEST(SoclApi, CreateInfoIsOpenGlLikeButObjectScoped){
+TEST(VucolApi, CreateInfoIsOpenGlLikeButObjectScoped){
     std::vector<std::uint32_t> spirv = {0x07230203u};
 
     ShaderPipelineCreateInfo createInfo{
@@ -39,7 +39,7 @@ TEST(SoclApi, CreateInfoIsOpenGlLikeButObjectScoped){
     EXPECT_EQ(createInfo.specConstants[2].size(), sizeof(std::uint32_t));
 }
 
-TEST(SoclApi, SpecConstantConvenienceApiSupportsScalarTypes){
+TEST(VucolApi, SpecConstantConvenienceApiSupportsScalarTypes){
     const ShaderPipelineCreateInfo createInfo{
         .specConstants = {
             {0, specConstant(std::uint32_t{8})},
@@ -64,7 +64,7 @@ TEST(SoclApi, SpecConstantConvenienceApiSupportsScalarTypes){
     EXPECT_EQ(enabled, VK_TRUE);
 }
 
-TEST(SoclApi, ShaderPipelineCreateInfoAllowsOptionalRequiredSubgroupSize){
+TEST(VucolApi, ShaderPipelineCreateInfoAllowsOptionalRequiredSubgroupSize){
     ShaderPipelineCreateInfo defaultInfo;
     EXPECT_FALSE(defaultInfo.requiredSubgroupSize.has_value());
 
@@ -75,7 +75,7 @@ TEST(SoclApi, ShaderPipelineCreateInfoAllowsOptionalRequiredSubgroupSize){
     EXPECT_EQ(*selectedInfo.requiredSubgroupSize, 32u);
 }
 
-TEST(SoclApi, SubgroupSupportInfoReportsSupportAndEnablementSeparately){
+TEST(VucolApi, SubgroupSupportInfoReportsSupportAndEnablementSeparately){
     const SubgroupSupportInfo info{
         .defaultSize = 32,
         .supportedStages = vk::ShaderStageFlagBits::eCompute,
@@ -98,7 +98,7 @@ TEST(SoclApi, SubgroupSupportInfoReportsSupportAndEnablementSeparately){
     EXPECT_EQ(info.maxSize, 64u);
 }
 
-TEST(SoclApi, GpuTimingSupportInfoReportsAutomaticFeatureEnablement){
+TEST(VucolApi, GpuTimingSupportInfoReportsAutomaticFeatureEnablement){
     const GpuTimingSupportInfo info{
         .synchronization2Supported = true,
         .synchronization2Enabled = true,
@@ -120,7 +120,7 @@ TEST(SoclApi, GpuTimingSupportInfoReportsAutomaticFeatureEnablement){
     EXPECT_DOUBLE_EQ(durationMicroseconds, 1.5);
 }
 
-TEST(SoclApi, GpuTimestampDeltaHandlesCounterWraparound){
+TEST(VucolApi, GpuTimestampDeltaHandlesCounterWraparound){
     EXPECT_EQ(detail::timestampDelta(250, 5, 8), 11u);
     EXPECT_EQ(detail::timestampDelta(
                   std::numeric_limits<std::uint64_t>::max() - 2,
@@ -132,7 +132,7 @@ TEST(SoclApi, GpuTimestampDeltaHandlesCounterWraparound){
         std::invalid_argument);
 }
 
-TEST(SoclApi, CompileGlslToSpirvReturnsComputeShaderBytecode){
+TEST(VucolApi, CompileGlslToSpirvReturnsComputeShaderBytecode){
     const char* source = R"(#version 450
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
@@ -146,7 +146,7 @@ void main(){
     EXPECT_EQ(spirv[0], 0x07230203u);
 }
 
-TEST(SoclApi, ShaderCompileOptionsCarryVulkanAndSpirvTargets){
+TEST(VucolApi, ShaderCompileOptionsCarryVulkanAndSpirvTargets){
     const ShaderCompileOptions defaults;
     EXPECT_EQ(defaults.vulkanVersion, VulkanVersion::Vulkan13);
     EXPECT_EQ(defaults.spirvVersion, SpirvVersion::Spirv13);
@@ -159,13 +159,13 @@ TEST(SoclApi, ShaderCompileOptionsCarryVulkanAndSpirvTargets){
     EXPECT_EQ(selected.spirvVersion, SpirvVersion::Spirv16);
 }
 
-TEST(SoclApi, CompileGlslToSpirvReportsInvalidGlsl){
+TEST(VucolApi, CompileGlslToSpirvReportsInvalidGlsl){
     EXPECT_THROW(
         static_cast<void>(compileGlslToSpirv("#version 450\ninvalid glsl\n")),
         std::runtime_error);
 }
 
-TEST(SoclApi, DefaultObjectsAreEmpty){
+TEST(VucolApi, DefaultObjectsAreEmpty){
     Buffer buffer;
     ShaderPipeline pipeline;
     DescriptorSet descriptorSet;
@@ -179,13 +179,13 @@ TEST(SoclApi, DefaultObjectsAreEmpty){
     EXPECT_EQ(buffer.size(), 0u);
 }
 
-TEST(SoclApi, BufferAccessExposesReadWriteIntent){
+TEST(VucolApi, BufferAccessExposesReadWriteIntent){
     EXPECT_NE(BufferAccess::Read, BufferAccess::Write);
     EXPECT_NE(BufferAccess::Read, BufferAccess::ReadWrite);
     EXPECT_NE(BufferAccess::Write, BufferAccess::ReadWrite);
 }
 
-TEST(SoclApi, ContextCreateInfoAllowsGpuSelectionAndExtensionRequirements){
+TEST(VucolApi, ContextCreateInfoAllowsGpuSelectionAndExtensionRequirements){
     ContextCreateInfo createInfo{
         .physicalDeviceIndex = 2,
         .requiredDeviceExtensions = {
@@ -198,7 +198,7 @@ TEST(SoclApi, ContextCreateInfoAllowsGpuSelectionAndExtensionRequirements){
     EXPECT_STREQ(createInfo.requiredDeviceExtensions[0], "VK_KHR_storage_buffer_storage_class");
 }
 
-TEST(SoclApi, CooperativeMatrixSupportInfoCarriesTileCombinations){
+TEST(VucolApi, CooperativeMatrixSupportInfoCarriesTileCombinations){
     const CooperativeMatrixTileProperties tile{
         .m = 16,
         .n = 8,
@@ -231,7 +231,7 @@ TEST(SoclApi, CooperativeMatrixSupportInfoCarriesTileCombinations){
     EXPECT_EQ(info.tiles[0].scope, vk::ScopeKHR::eSubgroup);
 }
 
-TEST(SoclApi, GpuInfoCarriesPrintableDeviceData){
+TEST(VucolApi, GpuInfoCarriesPrintableDeviceData){
     GpuInfo info{
         .index = 1,
         .name = "Example GPU",

@@ -4,7 +4,7 @@
 #include <string_view>
 #include <vector>
 
-namespace socl{
+namespace vucol{
     /** @brief Vulkan environment version targeted by shader compilation. */
     enum class VulkanVersion{
         Vulkan10, ///< Target Vulkan 1.0.

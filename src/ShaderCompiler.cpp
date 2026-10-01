@@ -1,11 +1,11 @@
-#include <socl/ShaderCompiler.hpp>
+#include <vucol/ShaderCompiler.hpp>
 
 #include <shaderc/shaderc.hpp>
 
 #include <stdexcept>
 #include <string>
 
-namespace socl{
+namespace vucol{
     namespace{
         shaderc_env_version toShadercVulkanVersion(VulkanVersion version){
             switch(version){
