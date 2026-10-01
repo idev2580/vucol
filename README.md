@@ -1,5 +1,5 @@
 # VUCOL
-A simple open compute library based on Vulkan.
+VUlkan COmpute Library
 
 ## Features
 - OpenGL-like syntax
