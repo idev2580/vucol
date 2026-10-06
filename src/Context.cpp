@@ -489,10 +489,18 @@ namespace vucol{
                 throw std::runtime_error(
                     "A required subgroup size was requested, but subgroup size control is not enabled.");
             }
+#if defined(__APPLE__)
+            // MoltenVK reports subgroup size control as supported while
+            // advertising empty requiredSubgroupSizeStages, even though the
+            // fixed Metal SIMD width already matches common requests (e.g. 32
+            // on Apple Silicon). Skip the stage check on macOS and let
+            // createComputePipeline validate the request instead.
+#else
             if(!(subgroup.requiredSizeStages & vk::ShaderStageFlagBits::eCompute)){
                 throw std::runtime_error(
                     "Required subgroup sizes are not supported for compute shaders.");
             }
+#endif
             if(requestedSize == 0 || (requestedSize & (requestedSize - 1)) != 0){
                 throw std::runtime_error("The required subgroup size must be a power of two.");
             }
@@ -572,11 +580,19 @@ namespace vucol{
             .setModule(state->shaderModule)
             .setPName(createInfo.entryPoint ? createInfo.entryPoint : "main")
             .setPSpecializationInfo(specializationEntries.empty() ? nullptr : &specializationInfo);
+#if defined(__APPLE__)
+        // MoltenVK advertises empty requiredSubgroupSizeStages, so chaining a
+        // required subgroup size is invalid usage and createComputePipeline may
+        // reject it. The Metal SIMD width is fixed anyway (32 on Apple Silicon,
+        // matching the usual request), so drop the requirement here and rely
+        // on the default subgroup size.
+#else
         vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo requiredSubgroupSizeInfo;
         if(createInfo.requiredSubgroupSize){
             requiredSubgroupSizeInfo.setRequiredSubgroupSize(*createInfo.requiredSubgroupSize);
             stageInfo.setPNext(&requiredSubgroupSizeInfo);
         }
+#endif
 
         vk::ComputePipelineCreateInfo pipelineInfo;
         pipelineInfo
