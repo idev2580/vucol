@@ -487,8 +487,10 @@ namespace vucol{
             static_cast<std::uint32_t>(enabledExtensions.size());
         deviceCreateInfo.ppEnabledExtensionNames = enabledExtensions.data();
 
+        // Device-group creation still takes one physical device; the full list
+        // travels in VkDeviceGroupDeviceCreateInfo.
         VkDevice rawDevice = VK_NULL_HANDLE;
-        checkVk(vkCreateDevice(state_->instance, &deviceCreateInfo, nullptr, &rawDevice),
+        checkVk(vkCreateDevice(selectedDevices[0], &deviceCreateInfo, nullptr, &rawDevice),
                 "vkCreateDevice failed for the device group.");
         state_->device = vk::Device(rawDevice);
         state_->queue = state_->device.getQueue(state_->queueFamily, 0);
