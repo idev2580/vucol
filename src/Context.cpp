@@ -1,6 +1,3 @@
-#define VMA_IMPLEMENTATION
-#include <vk_mem_alloc.h>
-
 #include <vucol/Context.hpp>
 
 #include "DispatchResources.hpp"
@@ -42,25 +39,6 @@ namespace{
                 return vk::DescriptorType::eStorageBuffer;
         }
         return vk::DescriptorType::eStorageBuffer;
-    }
-
-    VmaMemoryUsage toVmaMemoryUsage(vucol::BufferType type){
-        switch(type){
-            case vucol::BufferType::HostVisible:
-                return VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
-            case vucol::BufferType::Auto:
-            case vucol::BufferType::DeviceLocal:
-                return VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
-        }
-        return VMA_MEMORY_USAGE_AUTO;
-    }
-
-    VmaAllocationCreateFlags toVmaAllocationFlags(vucol::BufferType type){
-        if(type == vucol::BufferType::HostVisible){
-            return VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
-                   VMA_ALLOCATION_CREATE_MAPPED_BIT;
-        }
-        return 0;
     }
 
     vkb::Instance createVkbInstance(){
@@ -319,9 +297,6 @@ namespace vucol{
         ContextState::~ContextState(){
             if(device){
                 device.waitIdle();
-                if(allocator != VK_NULL_HANDLE){
-                    vmaDestroyAllocator(allocator);
-                }
                 if(commandPool){
                     device.destroyCommandPool(commandPool);
                 }
@@ -347,79 +322,204 @@ namespace vucol{
         auto vkbPhysicalDevices = unwrap(
             selector.select_devices(),
             "vk-bootstrap physical device selection failed");
-        if(createInfo.physicalDeviceIndex >= vkbPhysicalDevices.size()){
-            throw std::out_of_range("ContextCreateInfo::physicalDeviceIndex is out of range.");
+        auto selectedIndices = createInfo.physicalDeviceIndices;
+        if(selectedIndices.empty()){
+            selectedIndices.push_back(0);
+        }
+        for(const auto index : selectedIndices){
+            if(index >= vkbPhysicalDevices.size()){
+                throw std::out_of_range(
+                    "ContextCreateInfo::physicalDeviceIndices is out of range.");
+            }
         }
 
-        auto vkbPhysicalDevice = std::move(vkbPhysicalDevices[createInfo.physicalDeviceIndex]);
-        vkbPhysicalDevice.enable_extension_if_present(
-            VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
-        VkPhysicalDeviceSynchronization2Features requestedSynchronization2Features{};
-        requestedSynchronization2Features.sType =
+        std::vector<VkPhysicalDevice> selectedDevices;
+        selectedDevices.reserve(selectedIndices.size());
+        for(const auto index : selectedIndices){
+            selectedDevices.push_back(vkbPhysicalDevices[index].physical_device);
+        }
+        if(selectedDevices.size() > VK_MAX_DEVICE_GROUP_SIZE){
+            throw std::runtime_error("Too many GPUs for one Vulkan device group.");
+        }
+
+        const auto deviceGroups = state_->instance.enumeratePhysicalDeviceGroups();
+        const bool inOneGroup = std::any_of(
+            deviceGroups.begin(),
+            deviceGroups.end(),
+            [&](const vk::PhysicalDeviceGroupProperties& group){
+                if(group.physicalDeviceCount < selectedDevices.size()){
+                    return false;
+                }
+                return std::all_of(
+                    selectedDevices.begin(),
+                    selectedDevices.end(),
+                    [&](VkPhysicalDevice selected){
+                        return std::any_of(
+                            group.physicalDevices.begin(),
+                            group.physicalDevices.begin() + group.physicalDeviceCount,
+                            [&](vk::PhysicalDevice grouped){
+                                return static_cast<VkPhysicalDevice>(grouped) == selected;
+                            });
+                    });
+            });
+        if(!inOneGroup){
+            throw std::runtime_error(
+                "The selected GPUs do not form a single Vulkan device group.");
+        }
+
+        const std::uint32_t deviceCount =
+            static_cast<std::uint32_t>(selectedDevices.size());
+        state_->physicalDevices.reserve(deviceCount);
+        for(const auto rawDevice : selectedDevices){
+            state_->physicalDevices.push_back(vk::PhysicalDevice(rawDevice));
+        }
+
+        state_->physicalDeviceProperties.reserve(deviceCount);
+        state_->supportedDeviceExtensions.reserve(deviceCount);
+        std::vector<bool> synchronization2Supported(deviceCount, false);
+        std::vector<bool> subgroupSizeControlAvailable(deviceCount, false);
+        for(std::uint32_t i = 0; i < deviceCount; ++i){
+            const auto physicalDevice = state_->physicalDevices[i];
+            state_->physicalDeviceProperties.push_back(physicalDevice.getProperties());
+            state_->supportedDeviceExtensions.push_back(
+                enumerateDeviceExtensionNames(physicalDevice));
+
+            VkPhysicalDeviceSynchronization2Features synchronization2Query{};
+            synchronization2Query.sType =
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
+            VkPhysicalDeviceFeatures2 featuresQuery{};
+            featuresQuery.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            featuresQuery.pNext = &synchronization2Query;
+            vkGetPhysicalDeviceFeatures2(physicalDevice, &featuresQuery);
+            synchronization2Supported[i] = synchronization2Query.synchronization2 == VK_TRUE;
+
+            const auto& properties = state_->physicalDeviceProperties.back();
+            subgroupSizeControlAvailable[i] =
+                VK_VERSION_MAJOR(properties.apiVersion) > 1 ||
+                (VK_VERSION_MAJOR(properties.apiVersion) == 1 &&
+                 VK_VERSION_MINOR(properties.apiVersion) >= 3) ||
+                containsExtension(state_->supportedDeviceExtensions.back(),
+                                  VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
+        }
+
+        state_->queueFamily = findComputeQueueFamily(state_->physicalDevices[0]);
+        for(std::uint32_t i = 1; i < deviceCount; ++i){
+            const auto families = state_->physicalDevices[i].getQueueFamilyProperties();
+            if(state_->queueFamily >= families.size() ||
+               !(families[state_->queueFamily].queueFlags & vk::QueueFlagBits::eCompute)){
+                throw std::runtime_error(
+                    "Grouped GPUs expose compute queues at different family indices.");
+            }
+        }
+
+        const bool synchronization2Enabled = std::all_of(synchronization2Supported.begin(),
+                                                          synchronization2Supported.end(),
+                                                          [](bool supported){
+                                                              return supported;
+                                                          });
+        bool subgroupExtensionOnAll = true;
+        bool subgroupControlSupportedOnAll = true;
+        bool computeFullSubgroupsSupportedOnAll = true;
+        bool subgroupAvailableOnAll = true;
+        state_->subgroupSupportInfos.reserve(deviceCount);
+        for(std::uint32_t i = 0; i < deviceCount; ++i){
+            if(!containsExtension(state_->supportedDeviceExtensions[i],
+                                  VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME)){
+                subgroupExtensionOnAll = false;
+            }
+            if(!subgroupSizeControlAvailable[i]){
+                subgroupAvailableOnAll = false;
+            }
+            state_->subgroupSupportInfos.push_back(
+                makeSubgroupSupportInfo(state_->physicalDevices[i],
+                                        subgroupSizeControlAvailable[i]));
+            subgroupControlSupportedOnAll =
+                subgroupControlSupportedOnAll &&
+                state_->subgroupSupportInfos.back().sizeControlSupported;
+            computeFullSubgroupsSupportedOnAll =
+                computeFullSubgroupsSupportedOnAll &&
+                state_->subgroupSupportInfos.back().computeFullSubgroupsSupported;
+        }
+
+        std::vector<const char*> enabledExtensions(createInfo.requiredDeviceExtensions.begin(),
+                                                   createInfo.requiredDeviceExtensions.end());
+        if(subgroupExtensionOnAll){
+            enabledExtensions.push_back(VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
+        }
+
+        const float queuePriority = 1.0f;
+        VkDeviceQueueCreateInfo queueCreateInfo{};
+        queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueCreateInfo.queueFamilyIndex = state_->queueFamily;
+        queueCreateInfo.queueCount = 1;
+        queueCreateInfo.pQueuePriorities = &queuePriority;
+
+        VkDeviceGroupDeviceCreateInfo groupCreateInfo{};
+        groupCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_GROUP_DEVICE_CREATE_INFO;
+        groupCreateInfo.physicalDeviceCount = deviceCount;
+        groupCreateInfo.pPhysicalDevices = selectedDevices.data();
+
+        VkPhysicalDeviceSynchronization2Features synchronization2Features{};
+        synchronization2Features.sType =
             VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
-        requestedSynchronization2Features.synchronization2 = VK_TRUE;
-        const bool synchronization2Supported =
-            vkbPhysicalDevice.enable_extension_features_if_present(
-                requestedSynchronization2Features);
-        state_->physicalDevice = vk::PhysicalDevice(vkbPhysicalDevice.physical_device);
-        state_->physicalDeviceProperties = state_->physicalDevice.getProperties();
-        state_->supportedDeviceExtensions = enumerateDeviceExtensionNames(state_->physicalDevice);
+        synchronization2Features.synchronization2 =
+            synchronization2Enabled ? VK_TRUE : VK_FALSE;
 
-        const bool subgroupSizeControlAvailable =
-            VK_VERSION_MAJOR(state_->physicalDeviceProperties.apiVersion) > 1 ||
-            (VK_VERSION_MAJOR(state_->physicalDeviceProperties.apiVersion) == 1 &&
-             VK_VERSION_MINOR(state_->physicalDeviceProperties.apiVersion) >= 3) ||
-            containsExtension(state_->supportedDeviceExtensions,
-                              VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
-        state_->subgroupSupportInfo =
-            makeSubgroupSupportInfo(state_->physicalDevice, subgroupSizeControlAvailable);
-
-        VkPhysicalDeviceSubgroupSizeControlFeatures enabledSubgroupFeatures{};
-        enabledSubgroupFeatures.sType =
+        VkPhysicalDeviceSubgroupSizeControlFeatures subgroupFeatures{};
+        subgroupFeatures.sType =
             VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES;
-        enabledSubgroupFeatures.subgroupSizeControl =
-            state_->subgroupSupportInfo.sizeControlSupported ? VK_TRUE : VK_FALSE;
-        enabledSubgroupFeatures.computeFullSubgroups =
-            state_->subgroupSupportInfo.computeFullSubgroupsSupported ? VK_TRUE : VK_FALSE;
+        subgroupFeatures.subgroupSizeControl =
+            subgroupControlSupportedOnAll ? VK_TRUE : VK_FALSE;
+        subgroupFeatures.computeFullSubgroups =
+            computeFullSubgroupsSupportedOnAll ? VK_TRUE : VK_FALSE;
 
-        vkb::DeviceBuilder deviceBuilder(vkbPhysicalDevice);
-        if(subgroupSizeControlAvailable){
-            deviceBuilder.add_pNext(&enabledSubgroupFeatures);
+        groupCreateInfo.pNext = &synchronization2Features;
+        if(subgroupAvailableOnAll){
+            synchronization2Features.pNext = &subgroupFeatures;
         }
-        auto vkbDevice = unwrap(deviceBuilder.build(), "vk-bootstrap device creation failed");
 
-        state_->subgroupSupportInfo.sizeControlEnabled =
-            enabledSubgroupFeatures.subgroupSizeControl == VK_TRUE;
-        state_->subgroupSupportInfo.computeFullSubgroupsEnabled =
-            enabledSubgroupFeatures.computeFullSubgroups == VK_TRUE;
-        state_->cooperativeMatrixSupportInfo =
-            makeCooperativeMatrixSupportInfo(state_->instance,
-                                             state_->physicalDevice,
-                                             state_->supportedDeviceExtensions);
-        state_->device = vk::Device(vkbDevice.device);
-        state_->queueFamily = findComputeQueueFamily(state_->physicalDevice);
+        VkDeviceCreateInfo deviceCreateInfo{};
+        deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+        deviceCreateInfo.pNext = &groupCreateInfo;
+        deviceCreateInfo.queueCreateInfoCount = 1;
+        deviceCreateInfo.pQueueCreateInfos = &queueCreateInfo;
+        deviceCreateInfo.enabledExtensionCount =
+            static_cast<std::uint32_t>(enabledExtensions.size());
+        deviceCreateInfo.ppEnabledExtensionNames = enabledExtensions.data();
+
+        VkDevice rawDevice = VK_NULL_HANDLE;
+        checkVk(vkCreateDevice(state_->instance, &deviceCreateInfo, nullptr, &rawDevice),
+                "vkCreateDevice failed for the device group.");
+        state_->device = vk::Device(rawDevice);
         state_->queue = state_->device.getQueue(state_->queueFamily, 0);
-        state_->gpuTimingSupportInfo = makeGpuTimingSupportInfo(
-            state_->physicalDevice,
-            state_->physicalDeviceProperties,
-            state_->queueFamily,
-            synchronization2Supported,
-            synchronization2Supported);
-        state_->autoBufferUsesHostVisibleMemory =
-            state_->physicalDeviceProperties.deviceType == vk::PhysicalDeviceType::eIntegratedGpu &&
-            hasDeviceLocalHostVisibleMemory(state_->physicalDevice);
-        state_->gpuInfo = makeGpuInfo(state_->physicalDevice,
-                                      createInfo.physicalDeviceIndex,
-                                      state_->queueFamily);
 
-        const VmaAllocatorCreateInfo allocatorInfo{
-            .physicalDevice = state_->physicalDevice,
-            .device = state_->device,
-            .instance = state_->instance,
-            .vulkanApiVersion = VK_API_VERSION_1_3,
-        };
-        checkVk(vmaCreateAllocator(&allocatorInfo, &state_->allocator),
-                "vmaCreateAllocator failed.");
+        state_->cooperativeMatrixSupportInfos.reserve(deviceCount);
+        state_->gpuTimingSupportInfos.reserve(deviceCount);
+        state_->autoBufferUsesHostVisibleMemory.reserve(deviceCount);
+        state_->gpuInfos.reserve(deviceCount);
+        for(std::uint32_t i = 0; i < deviceCount; ++i){
+            const auto physicalDevice = state_->physicalDevices[i];
+            state_->subgroupSupportInfos[i].sizeControlEnabled =
+                subgroupControlSupportedOnAll;
+            state_->subgroupSupportInfos[i].computeFullSubgroupsEnabled =
+                computeFullSubgroupsSupportedOnAll;
+            state_->cooperativeMatrixSupportInfos.push_back(
+                makeCooperativeMatrixSupportInfo(state_->instance,
+                                                physicalDevice,
+                                                state_->supportedDeviceExtensions[i]));
+            state_->gpuTimingSupportInfos.push_back(
+                makeGpuTimingSupportInfo(physicalDevice,
+                                         state_->physicalDeviceProperties[i],
+                                         state_->queueFamily,
+                                         synchronization2Supported[i],
+                                         synchronization2Enabled));
+            state_->autoBufferUsesHostVisibleMemory.push_back(
+                state_->physicalDeviceProperties[i].deviceType ==
+                    vk::PhysicalDeviceType::eIntegratedGpu &&
+                hasDeviceLocalHostVisibleMemory(physicalDevice));
+            state_->gpuInfos.push_back(
+                makeGpuInfo(physicalDevice, selectedIndices[i], state_->queueFamily));
+        }
 
         vk::CommandPoolCreateInfo commandPoolInfo;
         commandPoolInfo
@@ -436,45 +536,47 @@ namespace vucol{
         }
     }
 
-    Buffer Context::createBuffer(std::size_t bytes, BufferType type){
+    Buffer Context::createBuffer(std::size_t bytes,
+                                  BufferType type,
+                                  std::uint32_t deviceIndex,
+                                  BufferPeerAccess peerAccess){
         if(bytes == 0){
             throw std::runtime_error("Cannot create a zero-sized vucol::Buffer.");
+        }
+        if(deviceIndex >= state_->deviceCount()){
+            throw std::out_of_range("createBuffer deviceIndex is out of range.");
         }
 
         auto state = std::make_shared<detail::BufferState>();
         state->context = state_;
-        state->allocator = state_->allocator;
         state->size = static_cast<vk::DeviceSize>(bytes);
+        state->ownerDeviceIndex = deviceIndex;
+        state->peerAccess = peerAccess;
 
         state->type = type == BufferType::Auto
-            ? (state_->autoBufferUsesHostVisibleMemory ? BufferType::HostVisible : BufferType::DeviceLocal)
+            ? (state_->autoBufferUsesHostVisibleMemory[deviceIndex]
+                   ? BufferType::HostVisible
+                   : BufferType::DeviceLocal)
             : type;
 
-        vk::BufferCreateInfo bufferInfo;
-        bufferInfo
-            .setSize(state->size)
-            .setUsage(vk::BufferUsageFlagBits::eStorageBuffer |
-                      vk::BufferUsageFlagBits::eUniformBuffer |
-                      vk::BufferUsageFlagBits::eTransferSrc |
-                      vk::BufferUsageFlagBits::eTransferDst)
-            .setSharingMode(vk::SharingMode::eExclusive);
-        const VmaAllocationCreateInfo allocationInfo{
-            .flags = toVmaAllocationFlags(state->type),
-            .usage = toVmaMemoryUsage(state->type),
-        };
-
-        VkBuffer rawBuffer = VK_NULL_HANDLE;
-        checkVk(vmaCreateBuffer(state_->allocator,
-                                reinterpret_cast<const VkBufferCreateInfo*>(&bufferInfo),
-                                &allocationInfo,
-                                &rawBuffer,
-                                &state->allocation,
-                                &state->allocationInfo),
-                "vmaCreateBuffer failed.");
-
-        state->buffer = vk::Buffer(rawBuffer);
-        state->hostVisible = (state->allocationInfo.pMappedData != nullptr) ||
-                             state->type == BufferType::HostVisible;
+        auto allocation = detail::allocateDeviceBuffer(
+            state_,
+            state->size,
+            vk::BufferUsageFlagBits::eStorageBuffer |
+                vk::BufferUsageFlagBits::eUniformBuffer |
+                vk::BufferUsageFlagBits::eTransferSrc |
+                vk::BufferUsageFlagBits::eTransferDst,
+            state->type == BufferType::HostVisible,
+            deviceIndex,
+            peerAccess);
+        state->buffer = allocation.buffer;
+        state->memory = allocation.memory;
+        state->mapped = allocation.mapped;
+        state->allocationSize = allocation.allocationSize;
+        state->memoryTypeIndex = allocation.memoryTypeIndex;
+        state->heapIndex = allocation.heapIndex;
+        state->hostVisible = allocation.hostVisible;
+        state->coherent = allocation.coherent;
         return Buffer(std::move(state));
     }
 
@@ -484,29 +586,33 @@ namespace vucol{
         }
         if(createInfo.requiredSubgroupSize){
             const auto requestedSize = *createInfo.requiredSubgroupSize;
-            const auto& subgroup = state_->subgroupSupportInfo;
-            if(!subgroup.sizeControlEnabled){
-                throw std::runtime_error(
-                    "A required subgroup size was requested, but subgroup size control is not enabled.");
-            }
+            // The pipeline is shared across the group, so the request must satisfy
+            // every device in it.
+            for(std::uint32_t i = 0; i < state_->deviceCount(); ++i){
+                const auto& subgroup = state_->subgroupSupportInfos[i];
+                if(!subgroup.sizeControlEnabled){
+                    throw std::runtime_error(
+                        "A required subgroup size was requested, but subgroup size control is not enabled.");
+                }
 #if defined(__APPLE__)
-            // MoltenVK reports subgroup size control as supported while
-            // advertising empty requiredSubgroupSizeStages, even though the
-            // fixed Metal SIMD width already matches common requests (e.g. 32
-            // on Apple Silicon). Skip the stage check on macOS and let
-            // createComputePipeline validate the request instead.
+                // MoltenVK reports subgroup size control as supported while
+                // advertising empty requiredSubgroupSizeStages, even though the
+                // fixed Metal SIMD width already matches common requests (e.g. 32
+                // on Apple Silicon). Skip the stage check on macOS and let
+                // createComputePipeline validate the request instead.
 #else
-            if(!(subgroup.requiredSizeStages & vk::ShaderStageFlagBits::eCompute)){
-                throw std::runtime_error(
-                    "Required subgroup sizes are not supported for compute shaders.");
-            }
+                if(!(subgroup.requiredSizeStages & vk::ShaderStageFlagBits::eCompute)){
+                    throw std::runtime_error(
+                        "Required subgroup sizes are not supported for compute shaders.");
+                }
 #endif
-            if(requestedSize == 0 || (requestedSize & (requestedSize - 1)) != 0){
-                throw std::runtime_error("The required subgroup size must be a power of two.");
-            }
-            if(requestedSize < subgroup.minSize || requestedSize > subgroup.maxSize){
-                throw std::runtime_error(
-                    "The required subgroup size is outside the GPU's supported range.");
+                if(requestedSize == 0 || (requestedSize & (requestedSize - 1)) != 0){
+                    throw std::runtime_error("The required subgroup size must be a power of two.");
+                }
+                if(requestedSize < subgroup.minSize || requestedSize > subgroup.maxSize){
+                    throw std::runtime_error(
+                        "The required subgroup size is outside the GPU's supported range.");
+                }
             }
         }
 
@@ -645,8 +751,12 @@ namespace vucol{
         return DescriptorSet(std::move(state));
     }
 
-    std::size_t Context::bufferOffsetAlignment(DescriptorType type) const{
-        const auto& limits = state_->physicalDeviceProperties.limits;
+    std::size_t Context::bufferOffsetAlignment(DescriptorType type,
+                                                       std::uint32_t deviceIndex) const{
+        if(deviceIndex >= state_->deviceCount()){
+            throw std::out_of_range("bufferOffsetAlignment deviceIndex is out of range.");
+        }
+        const auto& limits = state_->physicalDeviceProperties[deviceIndex].limits;
         const vk::DeviceSize alignment = type == DescriptorType::UniformBuffer
             ? limits.minUniformBufferOffsetAlignment
             : limits.minStorageBufferOffsetAlignment;
@@ -665,8 +775,16 @@ namespace vucol{
             .setCommandBufferCount(1);
         state_->recordingCommandBuffer = state_->device.allocateCommandBuffers(commandBufferAllocateInfo).front();
 
+        const std::uint32_t fullMask = detail::fullDeviceMask(state_->deviceCount());
+        const VkDeviceGroupCommandBufferBeginInfo groupBeginInfo{
+            .sType = VK_STRUCTURE_TYPE_DEVICE_GROUP_COMMAND_BUFFER_BEGIN_INFO,
+            .pNext = nullptr,
+            .deviceMask = fullMask,
+        };
         vk::CommandBufferBeginInfo beginInfo;
-        beginInfo.setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
+        beginInfo
+            .setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit)
+            .setPNext(&groupBeginInfo);
         state_->recordingCommandBuffer.begin(beginInfo);
         state_->recording = true;
         state_->currentPipeline.reset();
@@ -683,11 +801,13 @@ namespace vucol{
                 "GPU timing requires synchronization2 and timestamp support on the compute queue.");
         }
 
+        // Timestamps are interpreted with device zero's counter. Batches spanning
+        // several devices report an approximate duration.
         auto timing = std::make_shared<detail::GpuTimingState>();
         timing->device = state_->device;
-        timing->timestampValidBits = state_->gpuTimingSupportInfo.timestampValidBits;
+        timing->timestampValidBits = state_->gpuTimingSupportInfos[0].timestampValidBits;
         timing->timestampPeriodNanoseconds =
-            static_cast<double>(state_->gpuTimingSupportInfo.timestampPeriodNanoseconds);
+            static_cast<double>(state_->gpuTimingSupportInfos[0].timestampPeriodNanoseconds);
 
         vk::QueryPoolCreateInfo queryPoolInfo;
         queryPoolInfo
@@ -763,7 +883,11 @@ namespace vucol{
 
     void Context::dispatch(std::uint32_t groupCountX,
                            std::uint32_t groupCountY,
-                           std::uint32_t groupCountZ){
+                           std::uint32_t groupCountZ,
+                           std::uint32_t deviceIndex){
+        if(deviceIndex >= state_->deviceCount()){
+            throw std::out_of_range("dispatch deviceIndex is out of range.");
+        }
         if(!state_->recording){
             throw std::runtime_error("Call Context::begin() before Context::dispatch().");
         }
@@ -786,12 +910,18 @@ namespace vucol{
             }
             snapshot = detail::createDescriptorSnapshot(state_->currentDescriptorSet);
 
-            for(const auto& bound : snapshot->buffers){
+            for(std::size_t i = 0; i < snapshot->buffers.size(); ++i){
+                const auto& bound = snapshot->buffers[i];
+                detail::requireDeviceAccess(bound.buffer,
+                                            bound.access,
+                                            deviceIndex,
+                                            state_->currentPipeline->bindings[i].binding);
                 dispatchBuffers.push_back({
                     bound.buffer,
                     bound.offset,
                     bound.size,
                     bound.access,
+                    deviceIndex,
                 });
             }
         }
@@ -839,6 +969,9 @@ namespace vucol{
                 barriers.push_back(barrier);
             }
         }
+        // Switch the executing device before recording anything for this dispatch,
+        // so barriers and the dispatch itself run on the selected device.
+        state_->recordingCommandBuffer.setDeviceMask(detail::deviceBit(deviceIndex));
         if(!barriers.empty()){
             state_->recordingCommandBuffer.pipelineBarrier(
                 vk::PipelineStageFlagBits::eComputeShader,
@@ -859,6 +992,8 @@ namespace vucol{
         }
         state_->recordingCommandBuffer.dispatch(groupCountX, groupCountY, groupCountZ);
         detail::recordBufferAccesses(*recordingResources_, dispatchBuffers);
+        recordingResources_->currentDevice = deviceIndex;
+        recordingResources_->usedDeviceMask |= detail::deviceBit(deviceIndex);
     }
 
     DispatchToken Context::submitAsync(){
@@ -875,8 +1010,25 @@ namespace vucol{
         state_->recordingCommandBuffer.end();
 
         vk::Fence fence = state_->device.createFence({});
+        std::uint32_t submitMask = recordingResources_
+            ? recordingResources_->usedDeviceMask
+            : 0;
+        if(submitMask == 0){
+            submitMask = detail::fullDeviceMask(state_->deviceCount());
+        }
+        const VkDeviceGroupSubmitInfo groupSubmitInfo{
+            .sType = VK_STRUCTURE_TYPE_DEVICE_GROUP_SUBMIT_INFO,
+            .pNext = nullptr,
+            .waitSemaphoreCount = 0,
+            .pWaitSemaphoreDeviceIndices = nullptr,
+            .commandBufferCount = 1,
+            .pCommandBufferDeviceMasks = &submitMask,
+            .signalSemaphoreCount = 0,
+            .pSignalSemaphoreDeviceIndices = nullptr,
+        };
         vk::SubmitInfo submitInfo;
         submitInfo
+            .setPNext(&groupSubmitInfo)
             .setCommandBufferCount(1)
             .setPCommandBuffers(&state_->recordingCommandBuffer);
 
@@ -903,46 +1055,67 @@ namespace vucol{
         token.wait();
     }
 
-    bool Context::usingIntegratedGpu() const{
-        return state_->physicalDeviceProperties.deviceType == vk::PhysicalDeviceType::eIntegratedGpu;
+    namespace{
+        void checkDeviceIndex(const detail::ContextState& state, std::uint32_t deviceIndex){
+            if(deviceIndex >= state.deviceCount()){
+                throw std::out_of_range("Context deviceIndex is out of range.");
+            }
+        }
     }
 
-    bool Context::supportsGpuTiming() const{
-        const auto& info = state_->gpuTimingSupportInfo;
+    bool Context::usingIntegratedGpu(std::uint32_t deviceIndex) const{
+        checkDeviceIndex(*state_, deviceIndex);
+        return state_->physicalDeviceProperties[deviceIndex].deviceType ==
+               vk::PhysicalDeviceType::eIntegratedGpu;
+    }
+
+    bool Context::supportsGpuTiming(std::uint32_t deviceIndex) const{
+        checkDeviceIndex(*state_, deviceIndex);
+        const auto& info = state_->gpuTimingSupportInfos[deviceIndex];
         return info.synchronization2Enabled && info.timestampSupported;
     }
 
-    const GpuTimingSupportInfo& Context::gpuTimingSupportInfo() const{
-        return state_->gpuTimingSupportInfo;
+    const GpuTimingSupportInfo& Context::gpuTimingSupportInfo(std::uint32_t deviceIndex) const{
+        checkDeviceIndex(*state_, deviceIndex);
+        return state_->gpuTimingSupportInfos[deviceIndex];
     }
 
-    const GpuInfo& Context::gpuInfo() const{
-        return state_->gpuInfo;
+    const GpuInfo& Context::gpuInfo(std::uint32_t deviceIndex) const{
+        checkDeviceIndex(*state_, deviceIndex);
+        return state_->gpuInfos[deviceIndex];
     }
 
-    std::vector<std::string> Context::supportedDeviceExtensions() const{
-        return state_->supportedDeviceExtensions;
+    std::vector<std::string> Context::supportedDeviceExtensions(std::uint32_t deviceIndex) const{
+        checkDeviceIndex(*state_, deviceIndex);
+        return state_->supportedDeviceExtensions[deviceIndex];
     }
 
-    bool Context::supportsDeviceExtension(std::string_view extensionName) const{
-        return containsExtension(state_->supportedDeviceExtensions, extensionName);
+    bool Context::supportsDeviceExtension(std::string_view extensionName,
+                                           std::uint32_t deviceIndex) const{
+        checkDeviceIndex(*state_, deviceIndex);
+        return containsExtension(state_->supportedDeviceExtensions[deviceIndex], extensionName);
     }
 
-    bool Context::supportsCooperativeMatrix() const{
-        const auto& info = state_->cooperativeMatrixSupportInfo;
+    bool Context::supportsCooperativeMatrix(std::uint32_t deviceIndex) const{
+        checkDeviceIndex(*state_, deviceIndex);
+        const auto& info = state_->cooperativeMatrixSupportInfos[deviceIndex];
         return info.extensionSupported && info.featureSupported && !info.tiles.empty();
     }
 
-    const CooperativeMatrixSupportInfo& Context::cooperativeMatrixSupportInfo() const{
-        return state_->cooperativeMatrixSupportInfo;
+    const CooperativeMatrixSupportInfo& Context::cooperativeMatrixSupportInfo(
+        std::uint32_t deviceIndex) const{
+        checkDeviceIndex(*state_, deviceIndex);
+        return state_->cooperativeMatrixSupportInfos[deviceIndex];
     }
 
-    const SubgroupSupportInfo& Context::subgroupSupportInfo() const{
-        return state_->subgroupSupportInfo;
+    const SubgroupSupportInfo& Context::subgroupSupportInfo(std::uint32_t deviceIndex) const{
+        checkDeviceIndex(*state_, deviceIndex);
+        return state_->subgroupSupportInfos[deviceIndex];
     }
 
-    void Context::printGpuInfo(std::ostream& os) const{
-        const auto& info = gpuInfo();
+    void Context::printGpuInfo(std::ostream& os, std::uint32_t deviceIndex) const{
+        checkDeviceIndex(*state_, deviceIndex);
+        const auto& info = gpuInfo(deviceIndex);
         os << "VUCOL GPU " << info.index << '\n'
            << "  Name: " << info.name << '\n'
            << "  Type: " << info.type << '\n'
@@ -955,12 +1128,15 @@ namespace vucol{
            << "  Driver Version: " << info.driverVersion << '\n'
            << "  Compute Queue Family: " << info.computeQueueFamily << '\n'
            << "  Compute Queue Count: " << info.computeQueueCount << '\n'
-           << "  Device Extensions: " << state_->supportedDeviceExtensions.size() << '\n'
+           << "  Device Extensions: "
+           << state_->supportedDeviceExtensions[deviceIndex].size() << '\n'
            << "  GPU Timing: "
-           << (supportsGpuTiming() ? "supported" : "not supported") << '\n'
+           << (supportsGpuTiming(deviceIndex) ? "supported" : "not supported") << '\n'
            << "  Cooperative Matrix: "
-           << (supportsCooperativeMatrix() ? "supported" : "not supported")
-           << " (" << state_->cooperativeMatrixSupportInfo.tiles.size() << " tile combinations)\n";
+           << (supportsCooperativeMatrix(deviceIndex) ? "supported" : "not supported")
+           << " (" << state_->cooperativeMatrixSupportInfos[deviceIndex].tiles.size()
+           << " tile combinations)\n"
+           << "  Device Group Size: " << state_->deviceCount() << '\n';
     }
 
     std::vector<GpuInfo> Context::enumerateGpus(){

@@ -28,7 +28,7 @@ namespace vucol{
 
     /** @brief Descriptive and queue information for one enumerated GPU. */
     struct GpuInfo{
-        std::uint32_t index = 0; ///< Index accepted by ContextCreateInfo::physicalDeviceIndex.
+        std::uint32_t index = 0; ///< Index accepted by ContextCreateInfo::physicalDeviceIndices.
         std::string name; ///< Vulkan physical-device name.
         std::string type; ///< Human-readable physical-device type.
         std::uint32_t vendorId = 0; ///< PCI-style vendor identifier reported by Vulkan.
@@ -41,7 +41,7 @@ namespace vucol{
 
     /** @brief Options used to create a Context. */
     struct ContextCreateInfo{
-        std::uint32_t physicalDeviceIndex = 0; ///< Index from enumerateGpus().
+        std::vector<std::uint32_t> physicalDeviceIndices = {0}; ///< Indices from enumerateGpus() forming one device group.
         std::vector<const char*> requiredDeviceExtensions; ///< Required null-terminated Vulkan extension names.
     };
 
@@ -186,8 +186,11 @@ namespace vucol{
     };
 
     /**
-     * @brief Owns one Vulkan device, compute queue, allocator, and recording state.
+     * @brief Owns one Vulkan device group, compute queue, and recording state.
      *
+     * The selected GPUs are merged into a single logical device (Vulkan device
+     * group) sharing one compute queue; each dispatch selects its executing device
+     * with @c deviceIndex, so one recorded batch may span several devices.
      * Resources created from a Context share ownership of its internal device state,
      * so they can outlive the Context handle. Final device teardown waits for the GPU
      * to become idle. A Context records at most one command batch at a time.
@@ -213,10 +216,13 @@ namespace vucol{
 
         /**
          * @brief Creates a context using explicit device-selection requirements.
-         * @param createInfo Input GPU index and required device extensions. Extension
-         *        name strings need only remain valid during construction.
-         * @throws std::out_of_range If physicalDeviceIndex is unavailable.
-         * @throws std::runtime_error If selection or Vulkan resource creation fails.
+         * @param createInfo Input GPU indices and required device extensions. Extension
+         *        name strings need only remain valid during construction. The indices
+         *        must belong to a single Vulkan device group; they are merged into one
+         *        logical device. An empty index list selects GPU zero.
+         * @throws std::out_of_range If a physical device index is unavailable.
+         * @throws std::runtime_error If selection or Vulkan resource creation fails,
+         *         or the selected GPUs do not form a single device group.
          * @par Synchronization
          * Synchronous; initialization is complete on return.
          */
@@ -257,14 +263,23 @@ namespace vucol{
          * @brief Allocates a GPU buffer owned by this context.
          * @param bytes Requested allocation size in bytes; must be greater than zero.
          * @param type Preferred memory placement. Auto resolves from the GPU type.
+         * @param deviceIndex Group device receiving the allocation. Memory is bound
+         *        to exactly this device; other devices may only access the buffer
+         *        when @p peerAccess allows it.
+         * @param peerAccess Peer-memory access granted to non-owner devices.
          * @return A non-empty shared Buffer handle.
-         * @throws std::runtime_error If @p bytes is zero or allocation fails.
+         * @throws std::out_of_range If @p deviceIndex is outside the group.
+         * @throws std::runtime_error If @p bytes is zero, allocation fails, or the
+         *         requested peer access is unsupported by the hardware.
          * @par Synchronization
          * Synchronous; the Vulkan buffer and allocation exist on return.
          * @par Thread safety
          * Not safe concurrently with other operations on this Context.
          */
-        Buffer createBuffer(std::size_t bytes, BufferType type = BufferType::Auto);
+        Buffer createBuffer(std::size_t bytes,
+                            BufferType type = BufferType::Auto,
+                            std::uint32_t deviceIndex = 0,
+                            BufferPeerAccess peerAccess = BufferPeerAccess::None);
 
         /**
          * @brief Creates a reusable compute pipeline from SPIR-V.
@@ -294,12 +309,15 @@ namespace vucol{
         /**
          * @brief Returns the required byte alignment for a buffer descriptor offset.
          * @param type Shader descriptor type whose alignment is requested.
+         * @param deviceIndex Group device whose limit is requested.
          * @return The selected device's uniform- or storage-buffer offset alignment.
          *         UnifiedPreferred uses the storage-buffer requirement.
+         * @throws std::out_of_range If @p deviceIndex is outside the group.
          * @par Thread safety
          * Safe for concurrent reads when this Context is not being moved or destroyed.
          */
-        [[nodiscard]] std::size_t bufferOffsetAlignment(DescriptorType type) const;
+        [[nodiscard]] std::size_t bufferOffsetAlignment(DescriptorType type,
+                                                        std::uint32_t deviceIndex = 0) const;
 
         /**
          * @brief Starts recording a one-time compute command batch.
@@ -385,8 +403,13 @@ namespace vucol{
          * @param groupCountX Number of workgroups in the X dimension.
          * @param groupCountY Number of workgroups in the Y dimension.
          * @param groupCountZ Number of workgroups in the Z dimension.
+         * @param deviceIndex Group device executing this dispatch. The command buffer
+         *        switches to this device before recording barriers and the dispatch,
+         *        so one batch may target several devices in recording order.
+         * @throws std::out_of_range If @p deviceIndex is outside the group.
          * @throws std::runtime_error If required recording, pipeline, descriptor, or
-         *         buffer state is missing or incompatible.
+         *         buffer state is missing or incompatible, or a bound buffer is not
+         *         accessible from @p deviceIndex.
          * @par Recording model
          * Every call immediately copies the current logical DescriptorSet bindings into
          * a new immutable native descriptor snapshot. It then records both the command
@@ -414,7 +437,8 @@ namespace vucol{
          */
         void dispatch(std::uint32_t groupCountX,
                       std::uint32_t groupCountY = 1,
-                      std::uint32_t groupCountZ = 1);
+                      std::uint32_t groupCountZ = 1,
+                      std::uint32_t deviceIndex = 0);
 
         /**
          * @brief Submits the already recorded command sequence once for asynchronous execution.
@@ -453,87 +477,109 @@ namespace vucol{
 
         /**
          * @brief Reports whether the selected physical device is an integrated GPU.
+         * @param deviceIndex Group device to inspect.
          * @return `true` for Vulkan's integrated-GPU device type.
+         * @throws std::out_of_range If @p deviceIndex is outside the group.
          * @par Thread safety
          * Safe for concurrent reads when this Context is not being moved or destroyed.
          */
-        [[nodiscard]] bool usingIntegratedGpu() const;
+        [[nodiscard]] bool usingIntegratedGpu(std::uint32_t deviceIndex = 0) const;
 
         /**
          * @brief Reports whether timed command batches can be recorded.
+         * @param deviceIndex Group device to inspect.
          * @return `true` when synchronization2 is enabled and the selected compute queue
          *         exposes a usable timestamp counter.
+         * @throws std::out_of_range If @p deviceIndex is outside the group.
          * @par Thread safety
          * Safe for concurrent reads when this Context is not being moved or destroyed.
          */
-        [[nodiscard]] bool supportsGpuTiming() const;
+        [[nodiscard]] bool supportsGpuTiming(std::uint32_t deviceIndex = 0) const;
 
         /**
          * @brief Returns GPU timestamp and synchronization2 capability details.
+         * @param deviceIndex Group device to inspect.
          * @return Reference valid while the underlying Context state remains alive.
+         * @throws std::out_of_range If @p deviceIndex is outside the group.
          * @par Thread safety
          * Safe for concurrent reads when this Context is not being moved or destroyed.
          */
-        [[nodiscard]] const GpuTimingSupportInfo& gpuTimingSupportInfo() const;
+        [[nodiscard]] const GpuTimingSupportInfo& gpuTimingSupportInfo(std::uint32_t deviceIndex = 0) const;
 
         /**
          * @brief Returns information about the selected GPU.
+         * @param deviceIndex Group device to inspect.
          * @return Reference valid while the underlying Context state remains alive.
+         * @throws std::out_of_range If @p deviceIndex is outside the group.
          * @par Thread safety
          * Safe for concurrent reads when this Context is not being moved or destroyed.
          */
-        [[nodiscard]] const GpuInfo& gpuInfo() const;
+        [[nodiscard]] const GpuInfo& gpuInfo(std::uint32_t deviceIndex = 0) const;
 
         /**
          * @brief Copies the selected GPU's advertised device-extension names.
+         * @param deviceIndex Group device to inspect.
          * @return Owned vector of extension-name strings.
+         * @throws std::out_of_range If @p deviceIndex is outside the group.
          * @par Thread safety
          * Safe for concurrent reads when this Context is not being moved or destroyed.
          */
-        [[nodiscard]] std::vector<std::string> supportedDeviceExtensions() const;
+        [[nodiscard]] std::vector<std::string> supportedDeviceExtensions(std::uint32_t deviceIndex = 0) const;
 
         /**
          * @brief Tests whether the selected GPU advertises an extension.
          * @param extensionName Input extension name to search for.
+         * @param deviceIndex Group device to inspect.
          * @return `true` on an exact advertised-name match; otherwise `false`.
+         * @throws std::out_of_range If @p deviceIndex is outside the group.
          * @par Thread safety
          * Safe for concurrent reads when this Context is not being moved or destroyed.
          */
-        [[nodiscard]] bool supportsDeviceExtension(std::string_view extensionName) const;
+        [[nodiscard]] bool supportsDeviceExtension(std::string_view extensionName,
+                                                   std::uint32_t deviceIndex = 0) const;
 
         /**
          * @brief Reports usable cooperative-matrix support.
+         * @param deviceIndex Group device to inspect.
          * @return `true` when extension, feature, and at least one tile are available.
+         * @throws std::out_of_range If @p deviceIndex is outside the group.
          * @par Thread safety
          * Safe for concurrent reads when this Context is not being moved or destroyed.
          */
-        [[nodiscard]] bool supportsCooperativeMatrix() const;
+        [[nodiscard]] bool supportsCooperativeMatrix(std::uint32_t deviceIndex = 0) const;
 
         /**
          * @brief Returns cooperative-matrix capabilities for the selected GPU.
+         * @param deviceIndex Group device to inspect.
          * @return Reference valid while the underlying Context state remains alive.
+         * @throws std::out_of_range If @p deviceIndex is outside the group.
          * @par Thread safety
          * Safe for concurrent reads when this Context is not being moved or destroyed.
          */
-        [[nodiscard]] const CooperativeMatrixSupportInfo& cooperativeMatrixSupportInfo() const;
+        [[nodiscard]] const CooperativeMatrixSupportInfo& cooperativeMatrixSupportInfo(std::uint32_t deviceIndex = 0) const;
 
         /**
          * @brief Returns subgroup capabilities for the selected GPU.
+         * @param deviceIndex Group device to inspect.
          * @return Reference valid while the underlying Context state remains alive.
+         * @throws std::out_of_range If @p deviceIndex is outside the group.
          * @par Thread safety
          * Safe for concurrent reads when this Context is not being moved or destroyed.
          */
-        [[nodiscard]] const SubgroupSupportInfo& subgroupSupportInfo() const;
+        [[nodiscard]] const SubgroupSupportInfo& subgroupSupportInfo(std::uint32_t deviceIndex = 0) const;
 
         /**
          * @brief Writes a human-readable GPU information summary.
          * @param os Output stream receiving the formatted text.
+         * @param deviceIndex Group device described in detail; the summary always
+         *        covers the whole group as well.
+         * @throws std::out_of_range If @p deviceIndex is outside the group.
          * @par Synchronization
          * Synchronous host output; the method does not access the GPU queue.
          * @par Thread safety
          * The Context is read-only, but callers must synchronize shared access to @p os.
          */
-        void printGpuInfo(std::ostream& os) const;
+        void printGpuInfo(std::ostream& os, std::uint32_t deviceIndex = 0) const;
 
         /**
          * @brief Enumerates compute-capable GPUs available to a temporary Vulkan instance.

@@ -33,6 +33,7 @@ namespace vucol{
             vk::DeviceSize offset = 0;
             vk::DeviceSize size = 0;
             BufferAccess access = BufferAccess::ReadWrite;
+            std::uint32_t device = 0;
         };
 
         struct DescriptorSetState{

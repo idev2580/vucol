@@ -7,6 +7,7 @@
 #include <limits>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -94,13 +95,51 @@ namespace vucol::detail{
                right.offset < rangeEnd(left);
     }
 
+    bool peerAccessCovers(BufferPeerAccess granted, BufferAccess required){
+        const auto bits = static_cast<std::uint32_t>(granted);
+        const auto hasRead = (bits & static_cast<std::uint32_t>(BufferPeerAccess::PeerRead)) != 0;
+        const auto hasWrite =
+            (bits & static_cast<std::uint32_t>(BufferPeerAccess::PeerWrite)) != 0;
+        switch(required){
+            case BufferAccess::Read:
+                return hasRead;
+            case BufferAccess::Write:
+                return hasWrite;
+            case BufferAccess::ReadWrite:
+                return hasRead && hasWrite;
+        }
+        return false;
+    }
+
+    void requireDeviceAccess(const std::shared_ptr<BufferState>& buffer,
+                             BufferAccess access,
+                             std::uint32_t execDevice,
+                             std::uint32_t binding){
+        if(!buffer){
+            throw std::runtime_error("Descriptor binding has no buffer for access validation.");
+        }
+        if(buffer->ownerDeviceIndex == execDevice){
+            return;
+        }
+        if(peerAccessCovers(buffer->peerAccess, access)){
+            return;
+        }
+        throw std::runtime_error(
+            "Descriptor binding " + std::to_string(binding) +
+            " references a buffer owned by device " +
+            std::to_string(buffer->ownerDeviceIndex) +
+            ", which device " + std::to_string(execDevice) +
+            " may not access with the declared mode. Grant peer access at buffer creation.");
+    }
+
     std::vector<DispatchBufferUse> normalizeBufferUses(
         const std::vector<DispatchBufferUse>& uses){
         std::vector<DispatchBufferUse> normalized;
-        std::vector<std::shared_ptr<BufferState>> visitedBuffers;
+        std::vector<std::pair<std::shared_ptr<BufferState>, std::uint32_t>> visited;
 
         // Split overlapping bindings into disjoint intervals so each byte range has
-        // one combined access mode for the dispatch.
+        // one combined access mode for the dispatch. Uses from different devices
+        // are never merged: each (buffer, device) pair normalizes independently.
         for(const auto& first : uses){
             if(!first.buffer){
                 throw std::invalid_argument("A buffer access cannot reference an empty buffer.");
@@ -108,15 +147,15 @@ namespace vucol::detail{
             if(first.size == 0){
                 throw std::invalid_argument("A buffer access range cannot be empty.");
             }
-            if(std::find(visitedBuffers.begin(), visitedBuffers.end(), first.buffer) !=
-               visitedBuffers.end()){
+            const auto key = std::make_pair(first.buffer, first.device);
+            if(std::find(visited.begin(), visited.end(), key) != visited.end()){
                 continue;
             }
-            visitedBuffers.push_back(first.buffer);
+            visited.push_back(key);
 
             std::vector<vk::DeviceSize> boundaries;
             for(const auto& use : uses){
-                if(use.buffer == first.buffer){
+                if(use.buffer == first.buffer && use.device == first.device){
                     boundaries.push_back(use.offset);
                     boundaries.push_back(rangeEnd(use));
                 }
@@ -130,6 +169,7 @@ namespace vucol::detail{
                 std::optional<BufferAccess> combined;
                 for(const auto& use : uses){
                     if(use.buffer == first.buffer &&
+                       use.device == first.device &&
                        use.offset <= begin && end <= rangeEnd(use)){
                         combined = combined
                             ? mergeAccess(*combined, use.access)
@@ -142,11 +182,12 @@ namespace vucol::detail{
 
                 if(!normalized.empty() &&
                    normalized.back().buffer == first.buffer &&
+                   normalized.back().device == first.device &&
                    normalized.back().access == *combined &&
                    rangeEnd(normalized.back()) == begin){
                     normalized.back().size += end - begin;
                 }else{
-                    normalized.push_back({first.buffer, begin, end - begin, *combined});
+                    normalized.push_back({first.buffer, begin, end - begin, *combined, first.device});
                 }
             }
         }
@@ -166,6 +207,7 @@ namespace vucol::detail{
                 access.offset,
                 access.size,
                 access.access,
+                access.device,
             });
         }
     }
@@ -192,6 +234,7 @@ namespace vucol::detail{
                         previous.offset,
                         current.offset - previous.offset,
                         previous.access,
+                        previous.device,
                     });
                 }
                 if(currentEnd < previousEnd){
@@ -200,6 +243,7 @@ namespace vucol::detail{
                         currentEnd,
                         previousEnd - currentEnd,
                         previous.access,
+                        previous.device,
                     });
                 }
             }
@@ -217,7 +261,8 @@ namespace vucol::detail{
             commit.buffer = buffer;
             for(const auto& access : resources.lastBufferAccesses){
                 if(access.buffer == buffer){
-                    commit.accesses.push_back({access.offset, access.size, access.access});
+                    commit.accesses.push_back(
+                        {access.offset, access.size, access.access, access.device});
                 }
             }
             commits.push_back(std::move(commit));

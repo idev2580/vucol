@@ -17,6 +17,54 @@ namespace vucol{
         HostVisible, ///< Prefer memory that can be mapped directly by the host.
     };
 
+    /**
+     * @brief Selects which other devices in the group may access a Buffer.
+     *
+     * Every Buffer is allocated on exactly one owner device
+     * (see Buffer::ownerDeviceIndex()). The owner device always has full access.
+     * These flags additionally allow other devices in the same device group to
+     * read from, or write to, the buffer through peer memory. Requesting peer
+     * access that the hardware does not support fails at buffer creation time.
+     */
+    enum class BufferPeerAccess : std::uint32_t{
+        None = 0,         ///< No access from non-owner devices.
+        PeerRead = 1u << 0,  ///< Non-owner devices may read (ALLOW_PEER_READ).
+        PeerWrite = 1u << 1, ///< Non-owner devices may write (ALLOW_PEER_WRITE).
+    };
+
+    /** @brief Allows peer reads and peer writes (ALLOW_PEER_READ_WRITE). */
+    constexpr BufferPeerAccess ALLOW_PEER_READ_WRITE =
+        static_cast<BufferPeerAccess>(static_cast<std::uint32_t>(BufferPeerAccess::PeerRead) |
+                                      static_cast<std::uint32_t>(BufferPeerAccess::PeerWrite));
+    /** @brief Allows non-owner devices to read the buffer. */
+    constexpr BufferPeerAccess ALLOW_PEER_READ = BufferPeerAccess::PeerRead;
+    /** @brief Allows non-owner devices to write the buffer. */
+    constexpr BufferPeerAccess ALLOW_PEER_WRITE = BufferPeerAccess::PeerWrite;
+
+    /**
+     * @brief Combines peer-access flags.
+     * @param left First flag set.
+     * @param right Second flag set.
+     * @return Bitwise union of both sets.
+     */
+    [[nodiscard]] constexpr BufferPeerAccess operator|(BufferPeerAccess left,
+                                                            BufferPeerAccess right){
+        return static_cast<BufferPeerAccess>(static_cast<std::uint32_t>(left) |
+                                             static_cast<std::uint32_t>(right));
+    }
+
+    /**
+     * @brief Intersects peer-access flags.
+     * @param left First flag set.
+     * @param right Second flag set.
+     * @return Bitwise intersection of both sets.
+     */
+    [[nodiscard]] constexpr BufferPeerAccess operator&(BufferPeerAccess left,
+                                                            BufferPeerAccess right){
+        return static_cast<BufferPeerAccess>(static_cast<std::uint32_t>(left) &
+                                             static_cast<std::uint32_t>(right));
+    }
+
     namespace detail{
         struct ContextState;
         struct BufferState;
@@ -93,6 +141,24 @@ namespace vucol{
          * Safe under the same read-only conditions as size().
          */
         [[nodiscard]] BufferType type() const;
+
+        /**
+         * @brief Returns the device the buffer memory was allocated on.
+         * @return Owner device index within the owning Context's group,
+         *         or `0` for an empty handle.
+         * @par Thread safety
+         * Safe under the same read-only conditions as size().
+         */
+        [[nodiscard]] std::uint32_t ownerDeviceIndex() const;
+
+        /**
+         * @brief Returns the peer-access flags granted at creation.
+         * @return The BufferPeerAccess value, or BufferPeerAccess::None for an
+         *         empty handle.
+         * @par Thread safety
+         * Safe under the same read-only conditions as size().
+         */
+        [[nodiscard]] BufferPeerAccess peerAccess() const;
 
         /**
          * @brief Reports whether the allocation can be mapped by the CPU.

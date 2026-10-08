@@ -187,15 +187,43 @@ TEST(VucolApi, BufferAccessExposesReadWriteIntent){
 
 TEST(VucolApi, ContextCreateInfoAllowsGpuSelectionAndExtensionRequirements){
     ContextCreateInfo createInfo{
-        .physicalDeviceIndex = 2,
+        .physicalDeviceIndices = {2},
         .requiredDeviceExtensions = {
             "VK_KHR_storage_buffer_storage_class",
         },
     };
 
-    EXPECT_EQ(createInfo.physicalDeviceIndex, 2u);
+    ASSERT_EQ(createInfo.physicalDeviceIndices.size(), 1u);
+    EXPECT_EQ(createInfo.physicalDeviceIndices[0], 2u);
     ASSERT_EQ(createInfo.requiredDeviceExtensions.size(), 1u);
     EXPECT_STREQ(createInfo.requiredDeviceExtensions[0], "VK_KHR_storage_buffer_storage_class");
+}
+
+TEST(VucolApi, ContextCreateInfoDefaultsToFirstGpu){
+    const ContextCreateInfo createInfo{};
+
+    ASSERT_EQ(createInfo.physicalDeviceIndices.size(), 1u);
+    EXPECT_EQ(createInfo.physicalDeviceIndices[0], 0u);
+}
+
+TEST(VucolApi, BufferPeerAccessFlagsCombine){
+    EXPECT_EQ(ALLOW_PEER_READ, BufferPeerAccess::PeerRead);
+    EXPECT_EQ(ALLOW_PEER_WRITE, BufferPeerAccess::PeerWrite);
+    EXPECT_EQ(ALLOW_PEER_READ_WRITE,
+              BufferPeerAccess::PeerRead | BufferPeerAccess::PeerWrite);
+    EXPECT_EQ(static_cast<std::uint32_t>(BufferPeerAccess::None), 0u);
+
+    const BufferPeerAccess both =
+        BufferPeerAccess::PeerRead | BufferPeerAccess::PeerWrite;
+    EXPECT_NE(both & BufferPeerAccess::PeerRead, BufferPeerAccess::None);
+    EXPECT_NE(both & BufferPeerAccess::PeerWrite, BufferPeerAccess::None);
+    EXPECT_EQ((BufferPeerAccess::PeerRead & BufferPeerAccess::PeerWrite),
+              BufferPeerAccess::None);
+
+    EXPECT_TRUE(detail::peerAccessCovers(ALLOW_PEER_READ_WRITE, BufferAccess::ReadWrite));
+    EXPECT_TRUE(detail::peerAccessCovers(ALLOW_PEER_READ, BufferAccess::Read));
+    EXPECT_FALSE(detail::peerAccessCovers(ALLOW_PEER_READ, BufferAccess::Write));
+    EXPECT_FALSE(detail::peerAccessCovers(BufferPeerAccess::None, BufferAccess::Read));
 }
 
 TEST(VucolApi, CooperativeMatrixSupportInfoCarriesTileCombinations){

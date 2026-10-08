@@ -51,7 +51,7 @@ int main(int argc, char** argv){
             gpuIndex = static_cast<std::uint32_t>(std::stoul(argv[1]));
         }
 
-        vucol::Context context({.physicalDeviceIndex = gpuIndex});
+        vucol::Context context({.physicalDeviceIndices = {gpuIndex}});
         context.printGpuInfo(std::cout);
         std::cout << "  VK_KHR_shader_float16_int8: "
                   << (context.supportsDeviceExtension("VK_KHR_shader_float16_int8") ? "supported" : "not supported")

@@ -31,6 +31,7 @@ namespace vucol::detail{
         vk::DeviceSize offset = 0;
         vk::DeviceSize size = 0;
         BufferAccess access = BufferAccess::ReadWrite;
+        std::uint32_t device = 0;
     };
 
     struct BufferAccessCommit{
@@ -45,9 +46,17 @@ namespace vucol::detail{
         std::vector<DispatchBufferUse> lastBufferAccesses;
         std::shared_ptr<GpuTimingState> gpuTiming;
         bool bufferClaimsActive = false;
+        std::uint32_t currentDevice = 0;
+        std::uint32_t usedDeviceMask = 0;
 
         ~DispatchResources();
     };
+
+    [[nodiscard]] bool peerAccessCovers(BufferPeerAccess granted, BufferAccess required);
+    void requireDeviceAccess(const std::shared_ptr<BufferState>& buffer,
+                             BufferAccess access,
+                             std::uint32_t execDevice,
+                             std::uint32_t binding);
 
     [[nodiscard]] bool accessReads(BufferAccess access);
     [[nodiscard]] bool accessWrites(BufferAccess access);

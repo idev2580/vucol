@@ -72,14 +72,25 @@ namespace vucol{
             throw std::out_of_range("Descriptor buffer range is out of bounds.");
         }
 
-        const auto& limits = state_->context->physicalDeviceProperties.limits;
-        const bool uniform = it->type == DescriptorType::UniformBuffer;
-        const vk::DeviceSize alignment = uniform
-            ? limits.minUniformBufferOffsetAlignment
-            : limits.minStorageBufferOffsetAlignment;
-        const vk::DeviceSize maximumRange = uniform
-            ? limits.maxUniformBufferRange
-            : limits.maxStorageBufferRange;
+        // The set is shared across the group, so the binding must satisfy every
+        // device: the strictest alignment and the smallest maximum range win.
+        vk::DeviceSize alignment = 1;
+        vk::DeviceSize maximumRange = 0;
+        bool firstDevice = true;
+        for(const auto& properties : state_->context->physicalDeviceProperties){
+            const auto& limits = properties.limits;
+            const bool uniform = it->type == DescriptorType::UniformBuffer;
+            const vk::DeviceSize deviceAlignment = uniform
+                ? limits.minUniformBufferOffsetAlignment
+                : limits.minStorageBufferOffsetAlignment;
+            const vk::DeviceSize deviceMaximumRange = uniform
+                ? limits.maxUniformBufferRange
+                : limits.maxStorageBufferRange;
+            alignment = std::max(alignment, deviceAlignment);
+            maximumRange = firstDevice ? deviceMaximumRange
+                                       : std::min(maximumRange, deviceMaximumRange);
+            firstDevice = false;
+        }
         if(alignment != 0 && static_cast<vk::DeviceSize>(offset) % alignment != 0){
             throw std::runtime_error(
                 "Descriptor buffer offset does not satisfy the device alignment requirement.");
